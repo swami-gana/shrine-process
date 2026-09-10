@@ -48,7 +48,7 @@ export function CoordinatorApp() {
   }
 
   return (
-      <div className="h-full flex flex-col bg-bg">
+      <div className="min-h-dvh flex flex-col bg-bg">
         <OfflineBanner />
         <header className="px-4 pt-4 pb-2 bg-bg flex items-center justify-between">
           <h1 className="text-[15px] font-[650] text-text">{headerTitle()}</h1>

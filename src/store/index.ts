@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { AckField, AppState, Slot, WriteAction } from '../types'
 import { mockState } from '../data/mock'
 import { recomputeAllLastDone } from '../lib/derived'
-import { isPastSlot } from '../lib/slots'
+import { emptySlot, isPastSlot, normalizeSlotsForSchedule } from '../lib/slots'
 import { fetchState, postAction, isUsingMock } from '../api/client'
 import { enqueue, loadQueue, saveQueue, dequeue } from './writeQueue'
 
@@ -39,8 +39,11 @@ function applyWrite(state: AppState, action: WriteAction): AppState {
 
   switch (action.action) {
     case 'setAck': {
-      const idx = slots.findIndex((s) => s.index === action.slot)
-      if (idx === -1) break
+      let idx = slots.findIndex((s) => s.index === action.slot)
+      if (idx === -1) {
+        slots.push(emptySlot(action.slot))
+        idx = slots.length - 1
+      }
       const slot = { ...slots[idx] }
       const now = action.value ? new Date().toISOString() : null
       slot[action.field] = now
@@ -48,8 +51,11 @@ function applyWrite(state: AppState, action: WriteAction): AppState {
       break
     }
     case 'assign': {
-      const idx = slots.findIndex((s) => s.index === action.slot)
-      if (idx === -1) break
+      let idx = slots.findIndex((s) => s.index === action.slot)
+      if (idx === -1) {
+        slots.push(emptySlot(action.slot))
+        idx = slots.length - 1
+      }
       slots[idx] = {
         ...slots[idx],
         personId: action.personId,
@@ -102,8 +108,12 @@ function countFutureSlotsCleared(slots: Slot[], personId: string): number {
   return slots.filter((s) => s.personId === personId && !isPastSlot(s.index)).length
 }
 
+function normalizeState(state: AppState): AppState {
+  return { ...state, slots: normalizeSlotsForSchedule(state.slots) }
+}
+
 export const useStore = create<Store>((set, get) => ({
-  ...mockState,
+  ...normalizeState(mockState),
   loading: true,
   offline: false,
   queueCount: 0,
@@ -116,7 +126,7 @@ export const useStore = create<Store>((set, get) => ({
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as AppState
-        set({ ...parsed, loading: false })
+        set({ ...normalizeState(parsed), loading: false })
       } catch {
         set({ loading: false })
       }
@@ -130,8 +140,9 @@ export const useStore = create<Store>((set, get) => ({
     if (!isUsingMock()) {
       const remote = await fetchState()
       if (remote) {
-        set({ ...remote, loading: false, offline: false })
-        localStorage.setItem('shrine-cache', JSON.stringify(remote))
+        const normalized = normalizeState(remote)
+        set({ ...normalized, loading: false, offline: false })
+        localStorage.setItem('shrine-cache', JSON.stringify(normalized))
       } else if (!cached) {
         set({ offline: true })
       }
@@ -144,8 +155,9 @@ export const useStore = create<Store>((set, get) => ({
     if (isUsingMock()) return
     const remote = await fetchState()
     if (remote) {
-      set({ ...remote, offline: false })
-      localStorage.setItem('shrine-cache', JSON.stringify(remote))
+      const normalized = normalizeState(remote)
+      set({ ...normalized, offline: false })
+      localStorage.setItem('shrine-cache', JSON.stringify(normalized))
     }
   },
 
@@ -239,13 +251,14 @@ export const useStore = create<Store>((set, get) => ({
 
     const result = await postAction({ action: 'book', slot: slotIndex, personId })
     if (result.ok && result.state) {
-      set({ ...result.state })
-      localStorage.setItem('shrine-cache', JSON.stringify(result.state))
+      const normalized = normalizeState(result.state)
+      set({ ...normalized })
+      localStorage.setItem('shrine-cache', JSON.stringify(normalized))
       get().showSnackbar('Slot booked')
       return { ok: true }
     }
     if (result.state) {
-      set({ ...result.state })
+      set({ ...normalizeState(result.state) })
     }
     return { ok: false, reason: result.reason }
   },
@@ -267,8 +280,9 @@ export const useStore = create<Store>((set, get) => ({
         dequeue()
         queue = loadQueue()
         if (result.state) {
-          set({ ...result.state })
-          localStorage.setItem('shrine-cache', JSON.stringify(result.state))
+          const normalized = normalizeState(result.state)
+          set({ ...normalized })
+          localStorage.setItem('shrine-cache', JSON.stringify(normalized))
         }
         set({ queueCount: queue.length, failedCount: 0 })
       } else {

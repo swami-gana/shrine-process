@@ -1,4 +1,5 @@
 import { addDays, differenceInCalendarDays, format, isBefore, startOfDay } from 'date-fns'
+import type { Slot } from '../types'
 
 /** Slot index 0 begins 12 September 2026 */
 export const ANCHOR = new Date(2026, 8, 12)
@@ -100,6 +101,27 @@ export function scheduleBatchRange(): { min: number; max: number } {
   const maxIndex = Math.ceil(daysFromAnchor / 3)
   const maxBatch = Math.floor(maxIndex / 4)
   return { min: minBatch, max: maxBatch }
+}
+
+export function emptySlot(index: number): Slot {
+  return { index, personId: null, confirmedAt: null, kitAckAt: null, doneAt: null }
+}
+
+export function getSlot(slots: Slot[], index: number): Slot {
+  return slots.find((s) => s.index === index) ?? emptySlot(index)
+}
+
+/** Ensure every slot in the visible schedule range exists (prevents render crashes). */
+export function normalizeSlotsForSchedule(slots: Slot[]): Slot[] {
+  const { min, max } = scheduleBatchRange()
+  const minIndex = min * 4
+  const maxIndex = max * 4 + 3
+  const byIndex = new Map(slots.map((s) => [s.index, s]))
+  const result: Slot[] = []
+  for (let i = minIndex; i <= maxIndex; i++) {
+    result.push(byIndex.get(i) ?? emptySlot(i))
+  }
+  return result
 }
 
 export function bookableSlotIndices(): number[] {

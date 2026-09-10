@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import type { Person, Slot } from '../types'
 import { isBatchComplete } from '../lib/derived'
-import { formatBatchRange, batchSlots } from '../lib/slots'
+import { formatBatchRange, batchSlots, getSlot } from '../lib/slots'
 import { SlotCard } from './SlotCard'
 import { useLongPress } from '../hooks/useLongPress'
 import { InlinePanel } from './InlinePanel'
@@ -27,7 +27,7 @@ export function BatchCard({ batch, slots, people, onAssignSlot, onReplaceSlot }:
   const isOpen = openPanelId === panelId
   const complete = isBatchComplete(slots, batch)
   const batchSlotIndices = batchSlots(batch)
-  const batchSlotData = batchSlotIndices.map((i) => slots.find((s) => s.index === i)!)
+  const batchSlotData = batchSlotIndices.map((i) => getSlot(slots, i))
 
   const longPress = useLongPress({
     onLongPress: () => setOpenPanel(isOpen ? null : panelId),
