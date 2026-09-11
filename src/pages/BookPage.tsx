@@ -20,7 +20,7 @@ export function BookPage() {
   return (
     <div className="min-h-dvh flex flex-col bg-bg">
       <header className="px-4 pt-4 pb-2">
-        <h1 className="text-[15px] font-[650] text-text">Schedule Yourself</h1>
+        <h1 className="font-serif text-[28px] leading-[1.15] font-normal text-text-1">Schedule Yourself</h1>
       </header>
       <BookView />
       <Snackbar />

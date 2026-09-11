@@ -22,7 +22,7 @@ export class ErrorBoundary extends Component<Props, State> {
               localStorage.removeItem('shrine-cache')
               window.location.reload()
             }}
-            className="px-4 py-2 rounded-lg bg-active-stroke text-white text-[15px]"
+            className="px-4 py-2 rounded-[11px] bg-ember text-bg text-[15px]"
           >
             Clear cache and reload
           </button>

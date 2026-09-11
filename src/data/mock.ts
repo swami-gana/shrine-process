@@ -1,44 +1,32 @@
 import type { AppState } from '../types'
 import { DEFAULT_TEMPLATES } from '../lib/templates'
-import { parsePeopleCsv, parseSlotAssignmentsCsv, buildSlotsFromAssignments } from '../lib/csv'
+import { parseRosterCsv, parseSlotAssignmentsCsv, buildSlotsFromAssignments, applyScheduleSeedOverrides } from '../lib/csv'
 import { recomputeAllLastDone } from '../lib/derived'
 import peopleCsv from './people.csv?raw'
 import slotsCsv from './slots.csv?raw'
 
-function generateMockState(): AppState {
-  const people = parsePeopleCsv(peopleCsv)
-  const assignments = parseSlotAssignmentsCsv(slotsCsv, people)
-  let slots = buildSlotsFromAssignments(assignments, -4, 47)
+export const rosterParse = parseRosterCsv(peopleCsv)
 
-  // Mark one past slot as missed (assigned but not done)
-  const missedSlot = slots.find((s) => s.index === -2)
-  if (missedSlot && missedSlot.personId) {
-    missedSlot.confirmedAt = '2026-08-28T10:00:00.000Z'
-    missedSlot.kitAckAt = '2026-09-05T10:00:00.000Z'
+function generateMockState(): AppState {
+  const people = rosterParse.people
+  const sheetAssignments = parseSlotAssignmentsCsv(slotsCsv, people)
+  const assignments = applyScheduleSeedOverrides(sheetAssignments, people)
+  const slots = buildSlotsFromAssignments(assignments, -4, 47)
+
+  if (rosterParse.unmatchedNeverDone.length > 0) {
+    console.warn('Unmatched neverDone names (not created):', rosterParse.unmatchedNeverDone)
+  }
+  if (rosterParse.duplicateIds.length > 0) {
+    console.warn('Duplicate Br. No. in roster; suffixed ids:', rosterParse.duplicateIds)
   }
 
-  // Mark some slots with partial acks for demo
-  const currentBatch = slots.filter((s) => s.index >= 0 && s.index <= 3)
-  currentBatch.forEach((s, i) => {
-    if (s.personId && i < 2) {
-      s.confirmedAt = new Date().toISOString()
-    }
-  })
-
-  // Clear assignments after batch 11 (index 47) - TBD after that per spec
-  slots = slots.map((s) => {
-    if (s.index > 47) return s
-    return s
-  })
-
-  const peopleWithLastDone = recomputeAllLastDone(people, slots)
-
   return {
-    people: peopleWithLastDone,
+    people: recomputeAllLastDone(people, slots),
     slots,
     templates: DEFAULT_TEMPLATES,
-    version: 1,
+    version: 2,
   }
 }
 
 export const mockState: AppState = generateMockState()
+export const rosterCount = rosterParse.people.length

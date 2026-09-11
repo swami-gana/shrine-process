@@ -7,16 +7,19 @@ import { ScheduleTab } from '../components/ScheduleTab'
 import { ListTab } from '../components/ListTab'
 import { BookView } from '../components/BookView'
 import { Snackbar } from '../components/Snackbar'
-import { OfflineBanner } from '../components/OfflineBanner'
+import { StatusBar } from '../components/StatusBar'
+import { TabPager } from '../components/TabPager'
 
 export function CoordinatorApp() {
   const [tab, setTab] = useState<Tab>('schedule')
   const init = useStore((s) => s.init)
   const refresh = useStore((s) => s.refresh)
+  const processQueue = useStore((s) => s.processQueue)
   const setOpenPanel = useStore((s) => s.setOpenPanel)
   const showSnackbar = useStore((s) => s.showSnackbar)
   const people = useStore((s) => s.people)
   const openPanelId = useStore((s) => s.openPanelId)
+  const sheetOpen = useStore((s) => s.sheetOpen)
 
   const closePanel = useCallback(() => setOpenPanel(null), [setOpenPanel])
   useClickOutside(closePanel, !!openPanelId)
@@ -26,10 +29,18 @@ export function CoordinatorApp() {
   }, [init])
 
   useEffect(() => {
-    const onFocus = () => refresh()
+    const onFocus = () => {
+      processQueue()
+      refresh()
+    }
+    const onOnline = () => processQueue()
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [refresh])
+    window.addEventListener('online', onOnline)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [refresh, processQueue])
 
   const handleTabChange = (newTab: Tab) => {
     setOpenPanel(null)
@@ -48,32 +59,34 @@ export function CoordinatorApp() {
   }
 
   return (
-      <div className="min-h-dvh flex flex-col bg-bg">
-        <OfflineBanner />
-        <header className="px-4 pt-4 pb-2 bg-bg flex items-center justify-between">
-          <h1 className="text-[15px] font-[650] text-text">{headerTitle()}</h1>
-          {tab === 'list' && (
-            <button
-              type="button"
-              onClick={() => {
-                copyPlainText(`${window.location.origin}/book`)
-                showSnackbar('Scheduling link copied')
-              }}
-              className="text-[13px] text-active-stroke font-[550] pressable"
-            >
-              Copy scheduling link
-            </button>
-          )}
-        </header>
+    <div className="h-dvh flex flex-col bg-bg overflow-hidden">
+      <StatusBar />
+      <header className="px-4 pt-4 pb-2 bg-bg flex items-center justify-between shrink-0">
+        <h1 className="font-serif text-[28px] leading-[1.15] font-normal text-text-1">{headerTitle()}</h1>
+        {tab === 'list' && (
+          <button
+            type="button"
+            onClick={() => {
+              copyPlainText(`${window.location.origin}/book`)
+              showSnackbar('Scheduling link copied')
+            }}
+            className="text-[13px] text-ember font-medium pressable"
+          >
+            Copy scheduling link
+          </button>
+        )}
+      </header>
 
-        <main className="flex-1 flex flex-col min-h-0">
-          {tab === 'schedule' && <ScheduleTab />}
-          {tab === 'list' && <ListTab />}
-          {tab === 'book' && <BookView />}
-        </main>
+      <TabPager active={tab} onChange={handleTabChange} disabled={sheetOpen}>
+        <ListTab />
+        <ScheduleTab />
+        <div className="h-full min-h-0 flex flex-col">
+          <BookView />
+        </div>
+      </TabPager>
 
-        <BottomNav active={tab} onChange={handleTabChange} />
-        <Snackbar />
-      </div>
+      <BottomNav active={tab} onChange={handleTabChange} />
+      <Snackbar />
+    </div>
   )
 }

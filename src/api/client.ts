@@ -1,7 +1,9 @@
-import type { AppState, WriteAction } from '../types'
+import type { AppState, WriteAction, WriteFailure } from '../types'
 
 const API_URL = import.meta.env.VITE_API_URL as string | undefined
 const USE_MOCK = !API_URL
+
+export const POST_HEADERS = { 'Content-Type': 'text/plain;charset=utf-8' }
 
 export async function fetchState(): Promise<AppState | null> {
   if (USE_MOCK) return null
@@ -14,17 +16,50 @@ export async function fetchState(): Promise<AppState | null> {
   }
 }
 
-export async function postAction(action: WriteAction): Promise<{ ok: boolean; reason?: string; state?: AppState }> {
+function failure(
+  action: WriteAction,
+  extras: Omit<WriteFailure, 'at' | 'action'>,
+): WriteFailure {
+  return { at: new Date().toISOString(), action, ...extras }
+}
+
+export async function postAction(
+  action: WriteAction,
+): Promise<{ ok: boolean; reason?: string; state?: AppState; failure?: WriteFailure }> {
   if (USE_MOCK) return { ok: true }
   try {
     const res = await fetch(API_URL!, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: POST_HEADERS,
       body: JSON.stringify(action),
+      redirect: 'follow',
     })
-    return res.json()
-  } catch {
-    return { ok: false, reason: 'network' }
+    const body = await res.text()
+    if (!res.ok) {
+      const f = failure(action, { reachedServer: true, status: res.status, body })
+      console.error('Write failed', f)
+      return { ok: false, reason: 'http', failure: f }
+    }
+    try {
+      const parsed = JSON.parse(body) as { ok: boolean; reason?: string; state?: AppState }
+      if (!parsed.ok) {
+        const f = failure(action, { reachedServer: true, status: res.status, body })
+        console.error('Write rejected', f)
+        return { ...parsed, failure: f }
+      }
+      return parsed
+    } catch {
+      const f = failure(action, { reachedServer: true, status: res.status, body })
+      console.error('Write response was not JSON', f)
+      return { ok: false, reason: 'parse', failure: f }
+    }
+  } catch (err) {
+    const f = failure(action, {
+      reachedServer: false,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    console.error('Write did not reach server', f)
+    return { ok: false, reason: 'network', failure: f }
   }
 }
 

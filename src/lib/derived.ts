@@ -12,12 +12,12 @@ export function getSlotCardState(slot: Slot): SlotCardState {
 }
 
 export const SLOT_FILL: Record<SlotCardState, string> = {
-  tbd: 'bg-tbd',
-  assigned: 'bg-assigned',
-  confirmed: 'bg-confirmed',
-  kit: 'bg-kit',
-  done: 'bg-done',
-  missed: 'bg-missed',
+  tbd: 'bg-tbd text-tbd-fg',
+  assigned: 'bg-assigned text-assigned-fg',
+  confirmed: 'bg-confirmed text-confirmed-fg',
+  kit: 'bg-kit text-kit-fg',
+  done: 'bg-done text-done-fg',
+  missed: 'bg-missed text-missed-fg',
 }
 
 export function isBatchComplete(slots: Slot[], batch: number): boolean {
@@ -51,11 +51,13 @@ export function personStatusLine(person: Person): string {
   let base: string
   if (!person.available) {
     base = 'Not available'
-  } else if (person.lastDone === null) {
-    base = 'Yet to do'
-  } else {
+  } else if (person.lastDone !== null) {
     const days = differenceInCalendarDays(today(), new Date(person.lastDone + 'T12:00:00'))
     base = `Last done ${days} days ago`
+  } else if (person.neverDone) {
+    base = 'Yet to do'
+  } else {
+    base = 'Done before'
   }
   return person.backup ? `${base} (backup)` : base
 }
@@ -82,34 +84,32 @@ export function bestContact(person: Person): { value: string; channel: 'email' |
   return null
 }
 
+function nextUpGroup(person: Person): number {
+  if (person.lastDone !== null) return 2
+  if (person.neverDone) return 0
+  return 1
+}
+
+function byFullName(a: Person, b: Person): number {
+  return a.fullName.localeCompare(b.fullName)
+}
+
 export function sortNextUp(people: Person[]): Person[] {
   return [...people]
     .filter((p) => p.available)
     .sort((a, b) => {
-      if (a.lastDone === null && b.lastDone !== null) return -1
-      if (a.lastDone !== null && b.lastDone === null) return 1
-      if (a.lastDone === null && b.lastDone === null) {
-        return a.fullName.localeCompare(b.fullName)
+      const ga = nextUpGroup(a)
+      const gb = nextUpGroup(b)
+      if (ga !== gb) return ga - gb
+      if (ga === 2) {
+        const daysA = differenceInCalendarDays(today(), new Date(a.lastDone! + 'T12:00:00'))
+        const daysB = differenceInCalendarDays(today(), new Date(b.lastDone! + 'T12:00:00'))
+        if (daysB !== daysA) return daysB - daysA
       }
-      const daysA = differenceInCalendarDays(today(), new Date(a.lastDone! + 'T12:00:00'))
-      const daysB = differenceInCalendarDays(today(), new Date(b.lastDone! + 'T12:00:00'))
-      if (daysB !== daysA) return daysB - daysA
-      return a.fullName.localeCompare(b.fullName)
+      return byFullName(a, b)
     })
 }
 
 export function sortBackup(people: Person[]): Person[] {
-  return [...people]
-    .filter((p) => p.backup)
-    .sort((a, b) => {
-      if (a.lastDone === null && b.lastDone !== null) return -1
-      if (a.lastDone !== null && b.lastDone === null) return 1
-      if (a.lastDone === null && b.lastDone === null) {
-        return a.fullName.localeCompare(b.fullName)
-      }
-      const daysA = differenceInCalendarDays(today(), new Date(a.lastDone! + 'T12:00:00'))
-      const daysB = differenceInCalendarDays(today(), new Date(b.lastDone! + 'T12:00:00'))
-      if (daysB !== daysA) return daysB - daysA
-      return a.fullName.localeCompare(b.fullName)
-    })
+  return sortNextUp(people.filter((p) => p.backup))
 }

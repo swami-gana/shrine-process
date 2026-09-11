@@ -29,8 +29,8 @@ export function ListTab() {
 
   if (people.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center px-6">
-        <p className="text-[13px] text-secondary text-center">
+      <div className="flex-1 flex items-center justify-center px-6 h-full">
+        <p className="text-[13px] text-text-2 text-center">
           No one on the roster yet. Import the sheet to get started.
         </p>
       </div>
@@ -38,7 +38,7 @@ export function ListTab() {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col min-h-0 h-full">
       <div className="px-4 pt-2 pb-2 flex gap-2">
         {(['az', 'next', 'backup'] as Filter[]).map((f) => (
           <button
@@ -49,10 +49,10 @@ export function ListTab() {
               setOpenPanel(null)
             }}
             className={clsx(
-              'px-3 py-1.5 rounded-full text-[13px] font-[550] border',
+              'px-3 py-1.5 rounded-full text-[14px] leading-none font-medium border',
               filter === f
-                ? 'bg-active-stroke text-white border-active-stroke'
-                : 'bg-card text-secondary border-hairline',
+                ? 'bg-ember text-bg border-ember'
+                : 'bg-surface-2 text-text-2 border-hairline',
             )}
           >
             {f === 'az' ? 'A–Z' : f === 'next' ? 'Next up' : 'Backup'}
@@ -60,7 +60,7 @@ export function ListTab() {
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-24">
+      <div className="flex-1 overflow-y-auto pb-4">
         {sorted.map((person) => {
           const panelId = `person-${person.id}`
           const isOpen = openPanelId === panelId
@@ -71,7 +71,6 @@ export function ListTab() {
               person={person}
               isOpen={isOpen}
               onTogglePanel={() => setOpenPanel(isOpen ? null : panelId)}
-              onClosePanel={() => setOpenPanel(null)}
               onSetAvailability={(available) => setAvailability(person.id, available)}
               onSetBackup={(backup) => setBackup(person.id, backup)}
               onCopyContact={showSnackbar}

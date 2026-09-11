@@ -12,6 +12,7 @@ export type Person = {
   whatsapp: string | null
   language: Lang | null
   lastDone: string | null
+  neverDone: boolean
 }
 
 export type Slot = {
@@ -54,3 +55,12 @@ export type WriteAction =
   | { action: 'setAvailability'; personId: string; available: boolean }
   | { action: 'setBackup'; personId: string; backup: boolean }
   | { action: 'book'; slot: number; personId: string }
+
+export type WriteFailure = {
+  at: string
+  action: WriteAction
+  reachedServer: boolean
+  status?: number
+  body?: string
+  error?: string
+}

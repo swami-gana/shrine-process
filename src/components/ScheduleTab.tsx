@@ -11,7 +11,7 @@ export function ScheduleTab() {
   const assignPerson = useStore((s) => s.assignPerson)
   const setOpenPanel = useStore((s) => s.setOpenPanel)
 
-  const [picker, setPicker] = useState<{ slotIndex: number; mode: 'assign' | 'replace' } | null>(null)
+  const [picker, setPicker] = useState<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrolledRef = useRef(false)
 
@@ -34,48 +34,48 @@ export function ScheduleTab() {
   }, [loading, batches])
 
   const handleConfirm = (personId: string) => {
-    if (!picker) return
-    assignPerson(picker.slotIndex, personId)
+    if (picker === null) return
+    assignPerson(picker, personId)
     setPicker(null)
     setOpenPanel(null)
   }
 
   if (loading) {
     return (
-      <div className="px-4 pt-4 space-y-3">
+      <div className="px-4 pt-4 space-y-3 h-full">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="bg-card rounded-lg h-48 animate-pulse border border-hairline" />
+          <div key={i} className="bg-surface-1 rounded-[14px] h-48 animate-pulse" />
         ))}
       </div>
     )
   }
 
   return (
-    <>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pt-4 pb-24">
+    <div className="flex-1 flex flex-col min-h-0 h-full">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 pt-4 pb-4">
         {batches.map((batch) => (
           <div key={batch} id={`batch-${batch}`}>
             <BatchCard
               batch={batch}
               slots={slots}
               people={people}
-              onAssignSlot={(index) => setPicker({ slotIndex: index, mode: 'assign' })}
-              onReplaceSlot={(index) => setPicker({ slotIndex: index, mode: 'replace' })}
+              onSelectPerson={(index) => setPicker(index)}
             />
           </div>
         ))}
       </div>
 
       <PersonPicker
-        open={!!picker}
+        open={picker !== null}
         title="Choose a person"
-        slotIndex={picker?.slotIndex ?? 0}
+        slotIndex={picker ?? 0}
         people={people}
         showStatus
         excludeUnavailable
+        commitOnRowTap
         onConfirm={handleConfirm}
         onCancel={() => setPicker(null)}
       />
-    </>
+    </div>
   )
 }

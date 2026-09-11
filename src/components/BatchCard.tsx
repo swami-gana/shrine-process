@@ -1,23 +1,23 @@
 import clsx from 'clsx'
+import { AtSign, Mail } from 'lucide-react'
 import type { Person, Slot } from '../types'
 import { isBatchComplete } from '../lib/derived'
 import { formatBatchRange, batchSlots, getSlot } from '../lib/slots'
 import { SlotCard } from './SlotCard'
-import { useLongPress } from '../hooks/useLongPress'
 import { InlinePanel } from './InlinePanel'
 import { useStore } from '../store'
 import { copyPlainText, copyRichText } from '../lib/clipboard'
 import { resolveTokens, countTbdInBatch } from '../lib/templates'
+import { ExpandChevron, AppIcon } from '../icons/AppIcon'
 
 type Props = {
   batch: number
   slots: Slot[]
   people: Person[]
-  onAssignSlot: (index: number) => void
-  onReplaceSlot: (index: number) => void
+  onSelectPerson: (index: number) => void
 }
 
-export function BatchCard({ batch, slots, people, onAssignSlot, onReplaceSlot }: Props) {
+export function BatchCard({ batch, slots, people, onSelectPerson }: Props) {
   const templates = useStore((s) => s.templates)
   const showSnackbar = useStore((s) => s.showSnackbar)
   const openPanelId = useStore((s) => s.openPanelId)
@@ -28,11 +28,6 @@ export function BatchCard({ batch, slots, people, onAssignSlot, onReplaceSlot }:
   const complete = isBatchComplete(slots, batch)
   const batchSlotIndices = batchSlots(batch)
   const batchSlotData = batchSlotIndices.map((i) => getSlot(slots, i))
-
-  const longPress = useLongPress({
-    onLongPress: () => setOpenPanel(isOpen ? null : panelId),
-  })
-
   const headsUpTemplate = templates.find((t) => t.id === 'heads_up')
 
   const handleCopyEmails = () => {
@@ -45,9 +40,8 @@ export function BatchCard({ batch, slots, people, onAssignSlot, onReplaceSlot }:
 
   const handleCopyHeadsUp = () => {
     if (!headsUpTemplate) return
-    const firstSlot = batch * 4
     const { html, plain } = resolveTokens(headsUpTemplate, {
-      slotIndex: firstSlot,
+      slotIndex: batch * 4,
       people,
       slots,
     })
@@ -61,37 +55,63 @@ export function BatchCard({ batch, slots, people, onAssignSlot, onReplaceSlot }:
   }
 
   return (
-    <div className={clsx('mb-3', complete && 'opacity-45')}>
+    <div
+      className={clsx(
+        'mb-4 rounded-[14px] overflow-hidden bg-surface-1',
+        complete && 'opacity-40',
+      )}
+    >
       <div
-        {...longPress}
-        className="pressable bg-card rounded-t-lg px-4 py-3 flex items-center justify-between border border-hairline border-b-0"
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpenPanel(isOpen ? null : panelId)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setOpenPanel(isOpen ? null : panelId)
+          }
+        }}
+        className="pressable px-4 py-[14px] flex items-center gap-3"
       >
-        <span className="text-[15px] font-[550]">{formatBatchRange(batch)}</span>
-        {complete && <span className="text-active-stroke text-lg">✓</span>}
+        <ExpandChevron open={isOpen} />
+        <span className="flex-1 font-serif text-[22px] leading-[1.2] text-text-1 tabular">
+          {formatBatchRange(batch)}
+        </span>
+        {complete && <span className="text-text-3 text-lg">✓</span>}
       </div>
 
       {isOpen && (
         <InlinePanel
-          items={[
-            { label: 'Copy email IDs', onClick: handleCopyEmails },
-            { label: 'Copy heads-up message', onClick: handleCopyHeadsUp },
+          sections={[
+            {
+              rows: [
+                {
+                  icon: <AppIcon icon={AtSign} />,
+                  label: 'Email IDs',
+                  copy: true,
+                  onClick: handleCopyEmails,
+                },
+                {
+                  icon: <AppIcon icon={Mail} />,
+                  label: 'Heads-up message',
+                  copy: true,
+                  onClick: handleCopyHeadsUp,
+                },
+              ],
+            },
           ]}
-          onClose={() => setOpenPanel(null)}
         />
       )}
 
-      <div className="border border-hairline border-t-0 rounded-b-lg overflow-hidden">
-        {batchSlotData.map((slot) => (
-          <SlotCard
-            key={slot.index}
-            slot={slot}
-            people={people}
-            panelId={`slot-${slot.index}`}
-            onAssign={() => onAssignSlot(slot.index)}
-            onReplace={() => onReplaceSlot(slot.index)}
-          />
-        ))}
-      </div>
+      {batchSlotData.map((slot) => (
+        <SlotCard
+          key={slot.index}
+          slot={slot}
+          people={people}
+          panelId={`slot-${slot.index}`}
+          onSelectPerson={() => onSelectPerson(slot.index)}
+        />
+      ))}
     </div>
   )
 }

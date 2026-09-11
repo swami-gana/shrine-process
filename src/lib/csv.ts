@@ -1,4 +1,5 @@
 import type { Person, Slot } from '../types'
+import { NEVER_DONE_KEYS, neverDoneKey } from '../data/neverDone'
 import { slotIndexFromStart, slotStart } from './slots'
 
 function parseTitleName(full: string): { title: 'Swami' | 'Maa'; name: string; fullName: string } {
@@ -47,9 +48,21 @@ function parseComm(comm: string, contact: string, email: string): {
   return { email: emailVal, phone: phoneVal, whatsapp: whatsappVal }
 }
 
+export type RosterParse = {
+  people: Person[]
+  unmatchedNeverDone: string[]
+  duplicateIds: string[]
+}
+
 export function parsePeopleCsv(csv: string): Person[] {
+  return parseRosterCsv(csv).people
+}
+
+export function parseRosterCsv(csv: string): RosterParse {
   const lines = csv.trim().split('\n')
   const people: Person[] = []
+  const usedIds = new Set<string>()
+  const duplicateIds: string[] = []
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]
@@ -70,8 +83,15 @@ export function parsePeopleCsv(csv: string): Person[] {
     const { title, name, fullName } = parseTitleName(nameCol)
     const contacts = parseComm(comm, contact, email)
 
+    let id = brNo
+    if (usedIds.has(id)) {
+      duplicateIds.push(id)
+      id = `${brNo}:${name}`
+    }
+    usedIds.add(id)
+
     people.push({
-      id: brNo,
+      id,
       title,
       name,
       fullName,
@@ -82,10 +102,14 @@ export function parsePeopleCsv(csv: string): Person[] {
       whatsapp: contacts.whatsapp,
       language: null,
       lastDone: null,
+      neverDone: NEVER_DONE_KEYS.has(neverDoneKey(title, name)),
     })
   }
 
-  return people
+  const matched = new Set(people.map((p) => neverDoneKey(p.title, p.name)))
+  const unmatchedNeverDone = [...NEVER_DONE_KEYS].filter((key) => !matched.has(key))
+
+  return { people, unmatchedNeverDone, duplicateIds }
 }
 
 function parseCsvLine(line: string): string[] {
@@ -123,8 +147,8 @@ export function parseSlotAssignmentsCsv(
   const lines = csv.trim().split('\n')
   for (let i = 3; i < lines.length; i++) {
     const cols = parseCsvLine(lines[i])
-    const startStr = cols[7]?.trim()
-    const personName = cols[9]?.trim()
+    const startStr = cols[6]?.trim()
+    const personName = cols[8]?.trim()
     if (!startStr || !personName) continue
 
     const start = parseFlexibleDate(startStr)
@@ -166,6 +190,23 @@ function parseFlexibleDate(str: string): Date | null {
     }
   }
   return null
+}
+
+/** Sheet assignments at index >= 1; slot 0 = Yastir; slot -1 = Mukula. */
+export function applyScheduleSeedOverrides(
+  assignments: Map<number, string>,
+  people: Person[],
+): Map<number, string> {
+  const byName = new Map(people.map((p) => [p.fullName.toLowerCase(), p.id]))
+  const yastir = byName.get('swami yastir')
+  const mukula = byName.get('swami mukula')
+  const seeded = new Map<number, string>()
+  for (const [index, personId] of assignments) {
+    if (index >= 1) seeded.set(index, personId)
+  }
+  if (yastir) seeded.set(0, yastir)
+  if (mukula) seeded.set(-1, mukula)
+  return seeded
 }
 
 export function buildSlotsFromAssignments(

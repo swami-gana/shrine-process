@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import type { AckField, AppState, Slot, WriteAction } from '../types'
+import type { AckField, AppState, WriteAction, WriteFailure } from '../types'
 import { mockState } from '../data/mock'
-import { recomputeAllLastDone } from '../lib/derived'
-import { emptySlot, isPastSlot, normalizeSlotsForSchedule } from '../lib/slots'
+import { applyQueuedWrites, applyWrite, countFutureSlotsCleared, mergeNeverDone } from '../lib/applyWrite'
+import { normalizeSlotsForSchedule } from '../lib/slots'
 import { fetchState, postAction, isUsingMock } from '../api/client'
 import { enqueue, loadQueue, saveQueue, dequeue } from './writeQueue'
 
@@ -12,14 +12,18 @@ type Store = AppState & {
   loading: boolean
   offline: boolean
   queueCount: number
-  failedCount: number
+  bannerDismissed: boolean
+  lastFailure: WriteFailure | null
   snackbar: Snackbar
   openPanelId: string | null
+  sheetOpen: boolean
 
   init: () => Promise<void>
   refresh: () => Promise<void>
   showSnackbar: (message: string) => void
   setOpenPanel: (id: string | null) => void
+  setSheetOpen: (open: boolean) => void
+  dismissBanner: () => void
 
   toggleAck: (slotIndex: number, field: AckField) => void
   assignPerson: (slotIndex: number, personId: string) => void
@@ -33,83 +37,29 @@ type Store = AppState & {
 
 let snackbarId = 0
 
-function applyWrite(state: AppState, action: WriteAction): AppState {
-  const slots = [...state.slots]
-  const people = [...state.people]
-
-  switch (action.action) {
-    case 'setAck': {
-      let idx = slots.findIndex((s) => s.index === action.slot)
-      if (idx === -1) {
-        slots.push(emptySlot(action.slot))
-        idx = slots.length - 1
-      }
-      const slot = { ...slots[idx] }
-      const now = action.value ? new Date().toISOString() : null
-      slot[action.field] = now
-      slots[idx] = slot
-      break
-    }
-    case 'assign': {
-      let idx = slots.findIndex((s) => s.index === action.slot)
-      if (idx === -1) {
-        slots.push(emptySlot(action.slot))
-        idx = slots.length - 1
-      }
-      slots[idx] = {
-        ...slots[idx],
-        personId: action.personId,
-        confirmedAt: null,
-        kitAckAt: null,
-        doneAt: null,
-      }
-      break
-    }
-    case 'setAvailability': {
-      const pIdx = people.findIndex((p) => p.id === action.personId)
-      if (pIdx === -1) break
-      people[pIdx] = { ...people[pIdx], available: action.available }
-      if (!action.available) {
-        for (let i = 0; i < slots.length; i++) {
-          const s = slots[i]
-          if (s.personId === action.personId && !isPastSlot(s.index)) {
-            slots[i] = { ...s, personId: null, confirmedAt: null, kitAckAt: null, doneAt: null }
-          }
-        }
-      }
-      break
-    }
-    case 'setBackup': {
-      const pIdx = people.findIndex((p) => p.id === action.personId)
-      if (pIdx === -1) break
-      people[pIdx] = { ...people[pIdx], backup: action.backup }
-      break
-    }
-    case 'book': {
-      const idx = slots.findIndex((s) => s.index === action.slot)
-      if (idx === -1) break
-      if (slots[idx].personId) break
-      slots[idx] = {
-        ...slots[idx],
-        personId: action.personId,
-        confirmedAt: null,
-        kitAckAt: null,
-        doneAt: null,
-      }
-      break
-    }
-  }
-
-  const updatedPeople = recomputeAllLastDone(people, slots)
-  return { ...state, people: updatedPeople, slots }
+function cachePayload(state: AppState): string {
+  return JSON.stringify({
+    people: state.people,
+    slots: state.slots,
+    templates: state.templates,
+    version: state.version,
+  })
 }
 
-function countFutureSlotsCleared(slots: Slot[], personId: string): number {
-  return slots.filter((s) => s.personId === personId && !isPastSlot(s.index)).length
+function persist(state: AppState) {
+  localStorage.setItem('shrine-cache', cachePayload(state))
 }
 
 function normalizeState(state: AppState): AppState {
   return { ...state, slots: normalizeSlotsForSchedule(state.slots) }
+}
+
+function adoptRemote(remote: AppState, localPeople: AppState['people']): AppState {
+  const normalized = normalizeState(remote)
+  return {
+    ...normalized,
+    people: mergeNeverDone(normalized.people, localPeople),
+  }
 }
 
 export const useStore = create<Store>((set, get) => ({
@@ -117,16 +67,28 @@ export const useStore = create<Store>((set, get) => ({
   loading: true,
   offline: false,
   queueCount: 0,
-  failedCount: 0,
+  bannerDismissed: false,
+  lastFailure: null,
   snackbar: null,
   openPanelId: null,
+  sheetOpen: false,
 
   init: async () => {
     const cached = localStorage.getItem('shrine-cache')
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as AppState
-        set({ ...normalizeState(parsed), loading: false })
+        if ((parsed.version ?? 0) >= 2) {
+          set({
+            ...normalizeState({
+              ...parsed,
+              people: mergeNeverDone(parsed.people, mockState.people),
+            }),
+            loading: false,
+          })
+        } else {
+          set({ loading: false })
+        }
       } catch {
         set({ loading: false })
       }
@@ -140,9 +102,10 @@ export const useStore = create<Store>((set, get) => ({
     if (!isUsingMock()) {
       const remote = await fetchState()
       if (remote) {
-        const normalized = normalizeState(remote)
-        set({ ...normalized, loading: false, offline: false })
-        localStorage.setItem('shrine-cache', JSON.stringify(normalized))
+        const adopted = adoptRemote(remote, get().people)
+        const merged = applyQueuedWrites(adopted, loadQueue())
+        set({ ...merged, loading: false, offline: false })
+        persist(merged)
       } else if (!cached) {
         set({ offline: true })
       }
@@ -155,9 +118,10 @@ export const useStore = create<Store>((set, get) => ({
     if (isUsingMock()) return
     const remote = await fetchState()
     if (remote) {
-      const normalized = normalizeState(remote)
-      set({ ...normalized, offline: false })
-      localStorage.setItem('shrine-cache', JSON.stringify(normalized))
+      const adopted = adoptRemote(remote, get().people)
+      const merged = applyQueuedWrites(adopted, loadQueue())
+      set({ ...merged, offline: false })
+      persist(merged)
     }
   },
 
@@ -171,6 +135,8 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   setOpenPanel: (id) => set({ openPanelId: id }),
+  setSheetOpen: (open) => set({ sheetOpen: open }),
+  dismissBanner: () => set({ bannerDismissed: true }),
 
   toggleAck: (slotIndex, field) => {
     const state = get()
@@ -182,7 +148,7 @@ export const useStore = create<Store>((set, get) => ({
     const action: WriteAction = { action: 'setAck', slot: slotIndex, field, value }
     const next = applyWrite(state, action)
     set({ ...next })
-    localStorage.setItem('shrine-cache', JSON.stringify({ people: next.people, slots: next.slots, templates: next.templates, version: next.version }))
+    persist(next)
 
     const person = value && field === 'doneAt' && slot.personId
       ? state.people.find((p) => p.id === slot.personId)
@@ -194,7 +160,7 @@ export const useStore = create<Store>((set, get) => ({
     }
 
     enqueue(action)
-    set({ queueCount: loadQueue().length })
+    set({ queueCount: loadQueue().length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -202,10 +168,10 @@ export const useStore = create<Store>((set, get) => ({
     const action: WriteAction = { action: 'assign', slot: slotIndex, personId }
     const next = applyWrite(get(), action)
     set({ ...next })
-    localStorage.setItem('shrine-cache', JSON.stringify({ people: next.people, slots: next.slots, templates: next.templates, version: next.version }))
+    persist(next)
     get().showSnackbar('Slot updated')
     enqueue(action)
-    set({ queueCount: loadQueue().length })
+    set({ queueCount: loadQueue().length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -215,13 +181,13 @@ export const useStore = create<Store>((set, get) => ({
     const action: WriteAction = { action: 'setAvailability', personId, available }
     const next = applyWrite(state, action)
     set({ ...next })
-    localStorage.setItem('shrine-cache', JSON.stringify({ people: next.people, slots: next.slots, templates: next.templates, version: next.version }))
+    persist(next)
     const person = state.people.find((p) => p.id === personId)
     if (person && !available && cleared > 0) {
       get().showSnackbar(`${person.fullName} marked not available · ${cleared} future slot${cleared > 1 ? 's' : ''} back to TBD`)
     }
     enqueue(action)
-    set({ queueCount: loadQueue().length })
+    set({ queueCount: loadQueue().length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -229,9 +195,9 @@ export const useStore = create<Store>((set, get) => ({
     const action: WriteAction = { action: 'setBackup', personId, backup }
     const next = applyWrite(get(), action)
     set({ ...next })
-    localStorage.setItem('shrine-cache', JSON.stringify({ people: next.people, slots: next.slots, templates: next.templates, version: next.version }))
+    persist(next)
     enqueue(action)
-    set({ queueCount: loadQueue().length })
+    set({ queueCount: loadQueue().length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -245,20 +211,21 @@ export const useStore = create<Store>((set, get) => ({
       const action: WriteAction = { action: 'book', slot: slotIndex, personId }
       const next = applyWrite(state, action)
       set({ ...next })
+      persist(next)
       get().showSnackbar('Slot booked')
       return { ok: true }
     }
 
     const result = await postAction({ action: 'book', slot: slotIndex, personId })
     if (result.ok && result.state) {
-      const normalized = normalizeState(result.state)
-      set({ ...normalized })
-      localStorage.setItem('shrine-cache', JSON.stringify(normalized))
+      const adopted = adoptRemote(result.state, get().people)
+      set({ ...adopted })
+      persist(adopted)
       get().showSnackbar('Slot booked')
       return { ok: true }
     }
     if (result.state) {
-      set({ ...normalizeState(result.state) })
+      set({ ...adoptRemote(result.state, get().people) })
     }
     return { ok: false, reason: result.reason }
   },
@@ -266,12 +233,12 @@ export const useStore = create<Store>((set, get) => ({
   processQueue: async () => {
     if (isUsingMock()) {
       saveQueue([])
-      set({ queueCount: 0 })
+      set({ queueCount: 0, offline: false, lastFailure: null })
       return
     }
 
     let queue = loadQueue()
-    set({ queueCount: queue.length, offline: false })
+    set({ queueCount: queue.length })
 
     while (queue.length > 0) {
       const action = queue[0]
@@ -280,20 +247,24 @@ export const useStore = create<Store>((set, get) => ({
         dequeue()
         queue = loadQueue()
         if (result.state) {
-          const normalized = normalizeState(result.state)
-          set({ ...normalized })
-          localStorage.setItem('shrine-cache', JSON.stringify(normalized))
+          const adopted = adoptRemote(result.state, get().people)
+          const merged = applyQueuedWrites(adopted, queue)
+          set({ ...merged })
+          persist(merged)
         }
-        set({ queueCount: queue.length, failedCount: 0 })
+        set({ queueCount: queue.length, lastFailure: null, offline: false })
       } else {
-        set({ offline: true, failedCount: 1 })
+        set({
+          offline: true,
+          lastFailure: result.failure ?? null,
+          queueCount: queue.length,
+        })
         break
       }
     }
   },
 
   retryFailed: () => {
-    set({ failedCount: 0 })
     get().processQueue()
   },
 }))

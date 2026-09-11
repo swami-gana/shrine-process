@@ -48,7 +48,7 @@ function setupSheets() {
 
   getOrCreateSheet(ss, SHEETS.PEOPLE, [
     'id', 'title', 'name', 'fullName', 'available', 'backup',
-    'email', 'phone', 'whatsapp', 'language',
+    'email', 'phone', 'whatsapp', 'language', 'neverDone',
   ]);
 
   getOrCreateSheet(ss, SHEETS.SLOTS, [
@@ -137,6 +137,9 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  if (!e.postData || !e.postData.contents) {
+    return jsonResponse({ ok: false, reason: 'empty post' });
+  }
   const body = JSON.parse(e.postData.contents);
   const lock = LockService.getScriptLock();
   try {
@@ -178,8 +181,11 @@ function readState() {
 }
 
 function readPeople() {
+  ensurePeopleNeverDoneColumn();
   const sheet = getSpreadsheet().getSheetByName(SHEETS.PEOPLE);
   const data = sheet.getDataRange().getValues();
+  const headers = data[0] || [];
+  const neverCol = headers.indexOf('neverDone');
   const people = [];
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
@@ -195,10 +201,21 @@ function readPeople() {
       phone: row[7] || null,
       whatsapp: row[8] || null,
       language: row[9] || null,
+      neverDone: neverCol >= 0 && (row[neverCol] === true || row[neverCol] === 'TRUE' || row[neverCol] === 'true'),
       lastDone: null,
     });
   }
   return recomputeLastDone(people, readSlotsRaw());
+}
+
+function ensurePeopleNeverDoneColumn() {
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.PEOPLE);
+  if (!sheet) return;
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (headers.indexOf('neverDone') === -1) {
+    sheet.getRange(1, headers.length + 1).setValue('neverDone');
+  }
 }
 
 function readSlotsRaw() {
@@ -244,8 +261,7 @@ function readTemplates() {
 
 function setAck(slotIndex, field, value) {
   const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
-  const row = findSlotRow(sheet, slotIndex);
-  if (!row) return { ok: false, reason: 'slot not found' };
+  const row = ensureSlotRow(sheet, slotIndex);
 
   const colMap = { confirmedAt: 3, kitAckAt: 4, doneAt: 5 };
   const col = colMap[field];
@@ -256,8 +272,7 @@ function setAck(slotIndex, field, value) {
 
 function assignSlot(slotIndex, personId) {
   const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
-  const row = findSlotRow(sheet, slotIndex);
-  if (!row) return { ok: false, reason: 'slot not found' };
+  const row = ensureSlotRow(sheet, slotIndex);
 
   sheet.getRange(row, 2, 1, 4).setValues([[personId, '', '', '']]);
   bumpVersion();
@@ -301,8 +316,7 @@ function setBackup(personId, backup) {
 
 function bookSlot(slotIndex, personId) {
   const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
-  const row = findSlotRow(sheet, slotIndex);
-  if (!row) return { ok: false, reason: 'slot not found' };
+  const row = ensureSlotRow(sheet, slotIndex);
 
   const currentPerson = sheet.getRange(row, 2).getValue();
   if (currentPerson) {
@@ -332,6 +346,13 @@ function findSlotRow(sheet, index) {
     if (Number(data[i][0]) === index) return i + 1;
   }
   return null;
+}
+
+function ensureSlotRow(sheet, index) {
+  const existing = findSlotRow(sheet, index);
+  if (existing) return existing;
+  sheet.appendRow([index, '', '', '', '']);
+  return sheet.getLastRow();
 }
 
 function findPersonRow(sheet, id) {
