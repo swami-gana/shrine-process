@@ -25,13 +25,15 @@ function failure(
 
 export async function postAction(
   action: WriteAction,
+  meta?: { clientId: string; seq: number },
 ): Promise<{ ok: boolean; reason?: string; state?: AppState; failure?: WriteFailure }> {
   if (USE_MOCK) return { ok: true }
+  const payload = meta ? { ...action, clientId: meta.clientId, seq: meta.seq } : action
   try {
     const res = await fetch(API_URL!, {
       method: 'POST',
       headers: POST_HEADERS,
-      body: JSON.stringify(action),
+      body: JSON.stringify(payload),
       redirect: 'follow',
     })
     const body = await res.text()

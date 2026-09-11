@@ -46,13 +46,12 @@ function importPeopleFromSheet() {
     const seededAvailable = isInAshram(inAshram);
     const prev = existing[brNo];
     const available = prev && prev.available === false ? false : seededAvailable;
-    const neverDone = prev && typeof prev.neverDone === 'boolean'
-      ? prev.neverDone
-      : isNeverDone(parsed.title, parsed.name);
+    const neverDone = isNeverDone(parsed.title, parsed.name) || !!(prev && prev.neverDone);
+    const backup = isBackupSeed(parsed.fullName) ? true : (prev ? prev.backup : false);
 
     rows.push([
       brNo, parsed.title, parsed.name, parsed.fullName,
-      available, prev ? prev.backup : false,
+      available, backup,
       contacts.email, contacts.phone, contacts.whatsapp, '',
       neverDone,
     ]);
@@ -80,46 +79,250 @@ function importSlotsFromSheet() {
   const peopleData = peopleSheet.getDataRange().getValues();
   const nameToId = {};
   for (let i = 1; i < peopleData.length; i++) {
-    nameToId[String(peopleData[i][3]).toLowerCase()] = String(peopleData[i][0]);
+    const full = normalizePersonName(peopleData[i][3]);
+    const titled = normalizePersonName(String(peopleData[i][1] || '') + ' ' + String(peopleData[i][2] || ''));
+    const id = String(peopleData[i][0]);
+    if (full) nameToId[full] = id;
+    if (titled) nameToId[titled] = id;
   }
 
   const slotsSheet = ss.getSheetByName('Slots');
   const data = importSheet.getDataRange().getValues();
+  const cols = findShrineProcessColumns(data);
+  if (!cols) {
+    Logger.log('Could not find a column headed "Shrine Process". Put that header on the row above the names.');
+    return;
+  }
+  if (cols.startCol < 0) {
+    Logger.log('No Start Dates header to the left of Shrine Process; will look for dates in other cells on each row.');
+  } else {
+    Logger.log('Reading Shrine Process from column ' + columnLetter(cols.nameCol) +
+      ', start dates from column ' + columnLetter(cols.startCol) +
+      ', header row ' + (cols.headerRow + 1) + '.');
+  }
+
   const assignments = {};
+  const unmatched = [];
+  const seenUnmatched = {};
+  let namedRows = 0;
+  let datedRows = 0;
 
-  for (let i = 3; i < data.length; i++) {
-    const startStr = String(data[i][6] || '').trim();
-    const personName = String(data[i][8] || '').trim();
-    if (!startStr || !personName) continue;
+  for (let i = cols.headerRow + 1; i < data.length; i++) {
+    const row = data[i];
+    const personName = String(row[cols.nameCol] || '').replace(/\s+/g, ' ').trim();
+    if (!personName) continue;
+    namedRows++;
 
-    const start = parseFlexibleDate(startStr);
+    var start = cols.startCol >= 0 ? cellToDate(row[cols.startCol]) : null;
+    if (!start) {
+      for (var c = 0; c < row.length; c++) {
+        if (c === cols.nameCol) continue;
+        start = cellToDate(row[c]);
+        if (start) break;
+      }
+    }
     if (!start) continue;
+    datedRows++;
 
     const index = slotIndexFromStart(start);
-    const personId = nameToId[personName.toLowerCase()];
-    if (personId) assignments[index] = personId;
+    const personId = nameToId[normalizePersonName(personName)];
+    if (personId) {
+      assignments[index] = personId;
+    } else if (!seenUnmatched[personName]) {
+      seenUnmatched[personName] = true;
+      unmatched.push(personName);
+    }
+  }
+
+  if (datedRows === 0) {
+    Logger.log('Named rows: ' + namedRows + ', but none had a parseable start date.');
+    Logger.log('Paste three columns starting at A1: Start Dates | End Dates | Shrine Process. Names alone cannot be placed on a date.');
+    return;
   }
 
   const yastir = nameToId['swami yastir'];
   const mukula = nameToId['swami mukula'];
   const seeded = {};
-  Object.keys(assignments).forEach((key) => {
-    const index = Number(key);
-    if (index >= 1) seeded[index] = assignments[index];
+  Object.keys(assignments).forEach(function (key) {
+    seeded[Number(key)] = assignments[key];
   });
   if (yastir) seeded[0] = yastir;
   if (mukula) seeded[-1] = mukula;
 
-  const slotRows = [];
-  for (let i = -4; i <= 47; i++) {
-    slotRows.push([i, seeded[i] || '', '', '', '']);
+  const existing = {};
+  const existingData = slotsSheet.getLastRow() > 1 ? slotsSheet.getDataRange().getValues() : [];
+  for (let i = 1; i < existingData.length; i++) {
+    const row = existingData[i];
+    if (row[0] === '' || row[0] === null) continue;
+    existing[Number(row[0])] = {
+      personId: row[1] ? String(row[1]) : '',
+      confirmedAt: row[2] || '',
+      kitAckAt: row[3] || '',
+      doneAt: row[4] || '',
+    };
   }
+
+  const indexSet = {};
+  for (let i = -4; i <= 47; i++) indexSet[i] = true;
+  Object.keys(seeded).forEach(function (key) { indexSet[Number(key)] = true; });
+  Object.keys(existing).forEach(function (key) { indexSet[Number(key)] = true; });
+  const indices = Object.keys(indexSet).map(Number).sort(function (a, b) { return a - b; });
+
+  const conflicts = [];
+  const slotRows = indices.map(function (index) {
+    return mergeImportedSlot(index, existing[index], seeded[index] || '', conflicts);
+  });
 
   if (slotsSheet.getLastRow() > 1) {
     slotsSheet.getRange(2, 1, slotsSheet.getLastRow() - 1, 5).clearContent();
   }
-  slotsSheet.getRange(2, 1, slotRows.length, 5).setValues(slotRows);
-  Logger.log('Imported ' + slotRows.length + ' slots, ' + Object.keys(assignments).length + ' assigned.');
+  if (slotRows.length > 0) {
+    slotsSheet.getRange(2, 1, slotRows.length, 5).setValues(slotRows);
+  }
+
+  const assigned = slotRows.filter(function (r) { return r[1]; }).length;
+  const markedDone = slotRows.filter(function (r) { return r[4]; }).length;
+  Logger.log('Named rows: ' + namedRows + ', rows with a parseable date: ' + datedRows +
+    ', matched to a person: ' + Object.keys(assignments).length + '.');
+  Logger.log('Wrote ' + slotRows.length + ' slot rows, ' + assigned + ' with a personId, ' +
+    markedDone + ' marked done because the dates are already past.');
+  if (unmatched.length > 0) {
+    Logger.log('Unmatched names (not on the People tab): ' + unmatched.join(', '));
+  }
+  if (conflicts.length > 0) {
+    Logger.log('Left ' + conflicts.length + ' acknowledged slots unchanged:');
+    conflicts.forEach(function (c) {
+      Logger.log('  slot ' + c.index + ' kept ' + c.existingPersonId + ' (CSV had ' + c.incomingPersonId + ')');
+    });
+  }
+}
+
+function normalizeHeader(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function normalizePersonName(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function findShrineProcessColumns(rows) {
+  var scan = Math.min(rows.length, 15);
+  for (var i = 0; i < scan; i++) {
+    var row = rows[i] || [];
+    for (var j = 0; j < row.length; j++) {
+      if (normalizeHeader(row[j]) !== 'shrine process') continue;
+      var startCol = j - 2;
+      for (var k = j - 1; k >= 0; k--) {
+        var header = normalizeHeader(row[k]);
+        if (header === 'start dates' || header === 'start date') {
+          startCol = k;
+          break;
+        }
+      }
+      return { headerRow: i, startCol: startCol, nameCol: j };
+    }
+  }
+  return null;
+}
+
+function columnLetter(index) {
+  var n = index + 1;
+  var s = '';
+  while (n > 0) {
+    var rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function cellToDate(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return startOfDay(value);
+  }
+  if (typeof value === 'number' && value > 20000 && value < 80000) {
+    var d = new Date(Date.UTC(1899, 11, 30) + value * 86400000);
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+  return parseFlexibleDate(String(value || '').trim());
+}
+
+function isPastSlotIndex(index) {
+  return slotEnd(index).getTime() < startOfDay(new Date()).getTime();
+}
+
+function slotHasAck(prev) {
+  return !!(prev && (prev.confirmedAt || prev.kitAckAt || prev.doneAt));
+}
+
+function mergeImportedSlot(index, prev, incomingPersonId, conflicts) {
+  const current = prev || { personId: '', confirmedAt: '', kitAckAt: '', doneAt: '' };
+  let personId = current.personId;
+  if (incomingPersonId) {
+    if (slotHasAck(current) && current.personId && current.personId !== incomingPersonId) {
+      conflicts.push({
+        index: index,
+        existingPersonId: current.personId,
+        incomingPersonId: incomingPersonId,
+      });
+    } else if (!slotHasAck(current) || !current.personId) {
+      personId = incomingPersonId;
+    }
+  }
+  var doneAt = current.doneAt;
+  if (!doneAt && personId && isPastSlotIndex(index)) {
+    doneAt = slotEnd(index).toISOString();
+  }
+  return [index, personId, current.confirmedAt, current.kitAckAt, doneAt];
+}
+
+var BACKUP_NAMES = ['Maa Mukulita'];
+
+function isBackupSeed(fullName) {
+  var key = String(fullName || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  for (var i = 0; i < BACKUP_NAMES.length; i++) {
+    if (BACKUP_NAMES[i].toLowerCase() === key) return true;
+  }
+  return false;
+}
+
+function seedBackup() {
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.PEOPLE);
+  const data = sheet.getDataRange().getValues();
+  const seeded = [];
+  const missing = BACKUP_NAMES.slice();
+  for (let i = 1; i < data.length; i++) {
+    const fullName = String(data[i][3] || '');
+    if (isBackupSeed(fullName)) {
+      sheet.getRange(i + 1, 6).setValue(true);
+      seeded.push(fullName);
+      const idx = missing.findIndex(function (n) {
+        return n.toLowerCase() === fullName.trim().toLowerCase();
+      });
+      if (idx >= 0) missing.splice(idx, 1);
+    }
+  }
+  Logger.log(seeded.length ? 'Seeded backup for: ' + seeded.join(', ') : 'No backup names matched.');
+  if (missing.length > 0) Logger.log('Backup names not found on People: ' + missing.join(', '));
+}
+
+function seedNeverDoneFromList() {
+  ensurePeopleNeverDoneColumn();
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.PEOPLE);
+  const data = sheet.getDataRange().getValues();
+  const neverCol = data[0].indexOf('neverDone') + 1;
+  if (neverCol < 1) {
+    Logger.log('neverDone column missing.');
+    return;
+  }
+  let n = 0;
+  for (let i = 1; i < data.length; i++) {
+    if (isNeverDone(data[i][1], data[i][2])) {
+      sheet.getRange(i + 1, neverCol).setValue(true);
+      n++;
+    }
+  }
+  Logger.log('Seeded neverDone for ' + n + ' people.');
 }
 
 function parseTitleName(full) {
@@ -154,14 +357,24 @@ function parseComm(comm, contact, email) {
 }
 
 function parseFlexibleDate(str) {
-  var cleaned = str.replace(/\s/g, '');
-  var match = cleaned.match(/^([A-Za-z]+)-(\d{1,2})$/);
-  if (!match) return null;
+  var cleaned = String(str || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return null;
+
+  var iso = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
 
   var months = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
-  var month = months[match[1].toLowerCase().slice(0, 3)];
-  var day = parseInt(match[2], 10);
-  if (month === undefined) return null;
+  var month, day;
+  var mdy = cleaned.match(/^([A-Za-z]+)[-\s]+(\d{1,2})/);
+  var dmy = cleaned.match(/^(\d{1,2})[-\s]+([A-Za-z]+)/);
+  if (mdy) {
+    month = months[mdy[1].toLowerCase().slice(0, 3)];
+    day = parseInt(mdy[2], 10);
+  } else if (dmy) {
+    month = months[dmy[2].toLowerCase().slice(0, 3)];
+    day = parseInt(dmy[1], 10);
+  }
+  if (month === undefined || day === undefined) return null;
 
   for (var y = 0; y < 2; y++) {
     var year = y === 0 ? 2026 : 2027;

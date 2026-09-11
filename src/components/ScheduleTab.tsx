@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { BatchCard } from './BatchCard'
 import { PersonPicker } from './PersonPicker'
@@ -15,8 +15,10 @@ export function ScheduleTab() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrolledRef = useRef(false)
 
-  const { min, max } = scheduleBatchRange()
-  const batches = Array.from({ length: max - min + 1 }, (_, i) => min + i)
+  const batches = useMemo(() => {
+    const { min, max } = scheduleBatchRange()
+    return Array.from({ length: max - min + 1 }, (_, i) => min + i)
+  }, [])
 
   useEffect(() => {
     if (scrolledRef.current || loading) return

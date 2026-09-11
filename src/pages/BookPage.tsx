@@ -22,7 +22,7 @@ export function BookPage() {
       <header className="px-4 pt-4 pb-2">
         <h1 className="font-serif text-[28px] leading-[1.15] font-normal text-text-1">Schedule Yourself</h1>
       </header>
-      <BookView />
+      <BookView poll />
       <Snackbar />
     </div>
   )

@@ -11,7 +11,7 @@ function generateMockState(): AppState {
   const people = rosterParse.people
   const sheetAssignments = parseSlotAssignmentsCsv(slotsCsv, people)
   const assignments = applyScheduleSeedOverrides(sheetAssignments, people)
-  const slots = buildSlotsFromAssignments(assignments, -4, 47)
+  const slots = buildSlotsFromAssignments(assignments)
 
   if (rosterParse.unmatchedNeverDone.length > 0) {
     console.warn('Unmatched neverDone names (not created):', rosterParse.unmatchedNeverDone)

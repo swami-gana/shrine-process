@@ -30,8 +30,9 @@ export function CoordinatorApp() {
 
   useEffect(() => {
     const onFocus = () => {
-      processQueue()
-      refresh()
+      const queued = useStore.getState().queueCount
+      if (queued === 0) refresh()
+      else processQueue()
     }
     const onOnline = () => processQueue()
     window.addEventListener('focus', onFocus)

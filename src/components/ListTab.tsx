@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { useStore } from '../store'
 import { sortNextUp, sortBackup } from '../lib/derived'
@@ -16,7 +16,7 @@ export function ListTab() {
 
   const [filter, setFilter] = useState<Filter>('az')
 
-  const sorted = (() => {
+  const sorted = useMemo(() => {
     switch (filter) {
       case 'next':
         return sortNextUp(people)
@@ -25,7 +25,7 @@ export function ListTab() {
       default:
         return [...people].sort((a, b) => a.fullName.localeCompare(b.fullName))
     }
-  })()
+  }, [people, filter])
 
   if (people.length === 0) {
     return (

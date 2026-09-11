@@ -107,6 +107,13 @@ export function emptySlot(index: number): Slot {
   return { index, personId: null, confirmedAt: null, kitAckAt: null, doneAt: null }
 }
 
+export function seedPastSlotDone(slot: Slot): Slot {
+  if (slot.personId && !slot.doneAt && isPastSlot(slot.index)) {
+    return { ...slot, doneAt: slotEnd(slot.index).toISOString() }
+  }
+  return slot
+}
+
 export function getSlot(slots: Slot[], index: number): Slot {
   return slots.find((s) => s.index === index) ?? emptySlot(index)
 }
@@ -114,9 +121,13 @@ export function getSlot(slots: Slot[], index: number): Slot {
 /** Ensure every slot in the visible schedule range exists (prevents render crashes). */
 export function normalizeSlotsForSchedule(slots: Slot[]): Slot[] {
   const { min, max } = scheduleBatchRange()
-  const minIndex = min * 4
-  const maxIndex = max * 4 + 3
+  let minIndex = min * 4
+  let maxIndex = max * 4 + 3
   const byIndex = new Map(slots.map((s) => [s.index, s]))
+  for (const s of slots) {
+    minIndex = Math.min(minIndex, s.index)
+    maxIndex = Math.max(maxIndex, s.index)
+  }
   const result: Slot[] = []
   for (let i = minIndex; i <= maxIndex; i++) {
     result.push(byIndex.get(i) ?? emptySlot(i))

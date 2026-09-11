@@ -1,6 +1,7 @@
 import type { Person, Slot } from '../types'
 import { NEVER_DONE_KEYS, neverDoneKey } from '../data/neverDone'
-import { slotIndexFromStart, slotStart } from './slots'
+import { isBackupSeed } from '../data/backup'
+import { scheduleBatchRange, slotIndexFromStart, slotStart, seedPastSlotDone } from './slots'
 
 function parseTitleName(full: string): { title: 'Swami' | 'Maa'; name: string; fullName: string } {
   const trimmed = full.trim()
@@ -96,7 +97,7 @@ export function parseRosterCsv(csv: string): RosterParse {
       name,
       fullName,
       available: isInAshram(inAshram),
-      backup: false,
+      backup: isBackupSeed(fullName),
       email: contacts.email,
       phone: contacts.phone,
       whatsapp: contacts.whatsapp,
@@ -132,50 +133,84 @@ function parseCsvLine(line: string): string[] {
   return result
 }
 
-/** Parse shrine process assignments from the reserve CSV columns 7-9 */
-export function parseSlotAssignmentsCsv(
-  csv: string,
-  people: Person[],
-): Map<number, string> {
-  const assignments = new Map<number, string>()
-  const nameToId = new Map<string, string>()
-  for (const p of people) {
-    nameToId.set(p.fullName.toLowerCase(), p.id)
-    nameToId.set(`${p.title} ${p.name}`.toLowerCase(), p.id)
-  }
+export function normalizeHeader(value: unknown): string {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
 
-  const lines = csv.trim().split('\n')
-  for (let i = 3; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i])
-    const startStr = cols[6]?.trim()
-    const personName = cols[8]?.trim()
-    if (!startStr || !personName) continue
+export type ShrineProcessColumns = {
+  headerRow: number
+  startCol: number
+  nameCol: number
+}
 
-    const start = parseFlexibleDate(startStr)
-    if (!start) continue
-
-    const index = slotIndexFromStart(start)
-    const personId = nameToId.get(personName.toLowerCase())
-    if (personId) {
-      assignments.set(index, personId)
+/** Find the Shrine Process name column and the Start Dates column to its left. */
+export function findShrineProcessColumns(rows: unknown[][]): ShrineProcessColumns | null {
+  const scan = Math.min(rows.length, 15)
+  for (let i = 0; i < scan; i++) {
+    const row = rows[i] ?? []
+    for (let j = 0; j < row.length; j++) {
+      if (normalizeHeader(row[j]) !== 'shrine process') continue
+      let startCol = j - 2
+      for (let k = j - 1; k >= 0; k--) {
+        const header = normalizeHeader(row[k])
+        if (header === 'start dates' || header === 'start date') {
+          startCol = k
+          break
+        }
+      }
+      return { headerRow: i, startCol, nameCol: j }
     }
   }
+  return null
+}
 
-  return assignments
+function normalizePersonName(value: unknown): string {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+export function parseCellDate(value: unknown): Date | null {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate())
+  }
+  if (typeof value === 'number' && value > 20000 && value < 80000) {
+    const utc = Date.UTC(1899, 11, 30) + value * 86400000
+    const d = new Date(utc)
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+  }
+  const str = String(value ?? '').trim()
+  if (!str) return null
+  const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) {
+    return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
+  }
+  return parseFlexibleDate(str)
 }
 
 function parseFlexibleDate(str: string): Date | null {
-  const cleaned = str.replace(/\s/g, '')
-  const match = cleaned.match(/^([A-Za-z]+)-(\d{1,2})$/)
-  if (!match) return null
-
+  const cleaned = str.replace(/\s/g, ' ').trim()
   const months: Record<string, number> = {
     jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
     jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
   }
-  const month = months[match[1].toLowerCase().slice(0, 3)]
-  const day = parseInt(match[2], 10)
-  if (month === undefined) return null
+
+  let month: number | undefined
+  let day: number | undefined
+  const mdy = cleaned.match(/^([A-Za-z]+)[-\s]+(\d{1,2})/)
+  const dmy = cleaned.match(/^(\d{1,2})[-\s]+([A-Za-z]+)/)
+  if (mdy) {
+    month = months[mdy[1].toLowerCase().slice(0, 3)]
+    day = parseInt(mdy[2], 10)
+  } else if (dmy) {
+    month = months[dmy[2].toLowerCase().slice(0, 3)]
+    day = parseInt(dmy[1], 10)
+  }
+  if (month === undefined || day === undefined) return null
 
   for (const year of [2026, 2027]) {
     const d = new Date(year, month, day)
@@ -192,37 +227,112 @@ function parseFlexibleDate(str: string): Date | null {
   return null
 }
 
-/** Sheet assignments at index >= 1; slot 0 = Yastir; slot -1 = Mukula. */
+export type SlotParse = {
+  assignments: Map<number, string>
+  unmatchedNames: string[]
+}
+
+export function parseSlotAssignmentsFromRows(
+  rows: unknown[][],
+  people: Person[],
+): SlotParse {
+  const assignments = new Map<number, string>()
+  const unmatchedNames: string[] = []
+  const nameToId = new Map<string, string>()
+  for (const p of people) {
+    nameToId.set(normalizePersonName(p.fullName), p.id)
+    nameToId.set(normalizePersonName(`${p.title} ${p.name}`), p.id)
+  }
+
+  const cols = findShrineProcessColumns(rows)
+  if (!cols || cols.startCol < 0) {
+    return { assignments, unmatchedNames }
+  }
+
+  const seenUnmatched = new Set<string>()
+  for (let i = cols.headerRow + 1; i < rows.length; i++) {
+    const row = rows[i] ?? []
+    const personName = String(row[cols.nameCol] ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!personName) continue
+
+    let start = parseCellDate(row[cols.startCol])
+    if (!start) {
+      for (let c = 0; c < row.length; c++) {
+        if (c === cols.nameCol) continue
+        start = parseCellDate(row[c])
+        if (start) break
+      }
+    }
+    if (!start) continue
+
+    const index = slotIndexFromStart(start)
+    const personId = nameToId.get(normalizePersonName(personName))
+    if (personId) {
+      assignments.set(index, personId)
+    } else if (!seenUnmatched.has(personName)) {
+      seenUnmatched.add(personName)
+      unmatchedNames.push(personName)
+    }
+  }
+
+  return { assignments, unmatchedNames }
+}
+
+/** Parse shrine process assignments from a reserve sheet / CSV paste. */
+export function parseSlotAssignmentsCsv(
+  csv: string,
+  people: Person[],
+): Map<number, string> {
+  const rows = csv.split(/\r?\n/).map(parseCsvLine)
+  return parseSlotAssignmentsFromRows(rows, people).assignments
+}
+
+/** Keep every CSV date; slot 0 = Yastir; slot -1 = Mukula. */
 export function applyScheduleSeedOverrides(
   assignments: Map<number, string>,
   people: Person[],
 ): Map<number, string> {
   const byName = new Map(people.map((p) => [p.fullName.toLowerCase(), p.id]))
+  const seeded = new Map(assignments)
   const yastir = byName.get('swami yastir')
   const mukula = byName.get('swami mukula')
-  const seeded = new Map<number, string>()
-  for (const [index, personId] of assignments) {
-    if (index >= 1) seeded.set(index, personId)
-  }
   if (yastir) seeded.set(0, yastir)
   if (mukula) seeded.set(-1, mukula)
   return seeded
 }
 
+export function assignmentIndexRange(assignments: Map<number, string>): { min: number; max: number } {
+  const visible = scheduleBatchRange()
+  let min = visible.min * 4
+  let max = visible.max * 4 + 3
+  for (const index of assignments.keys()) {
+    min = Math.min(min, index)
+    max = Math.max(max, index)
+  }
+  return { min, max }
+}
+
 export function buildSlotsFromAssignments(
   assignments: Map<number, string>,
-  minIndex = -4,
-  maxIndex = 47,
+  minIndex?: number,
+  maxIndex?: number,
 ): Slot[] {
+  const range = assignmentIndexRange(assignments)
+  const min = minIndex ?? range.min
+  const max = maxIndex ?? range.max
   const slots: Slot[] = []
-  for (let i = minIndex; i <= maxIndex; i++) {
-    slots.push({
-      index: i,
-      personId: assignments.get(i) ?? null,
-      confirmedAt: null,
-      kitAckAt: null,
-      doneAt: null,
-    })
+  for (let i = min; i <= max; i++) {
+    slots.push(
+      seedPastSlotDone({
+        index: i,
+        personId: assignments.get(i) ?? null,
+        confirmedAt: null,
+        kitAckAt: null,
+        doneAt: null,
+      }),
+    )
   }
   return slots
 }

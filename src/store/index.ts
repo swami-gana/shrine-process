@@ -2,9 +2,20 @@ import { create } from 'zustand'
 import type { AckField, AppState, WriteAction, WriteFailure } from '../types'
 import { mockState } from '../data/mock'
 import { applyQueuedWrites, applyWrite, countFutureSlotsCleared, mergeNeverDone } from '../lib/applyWrite'
+import { canAutoRetry, backoffDelayMs, queuePayloads } from '../lib/mutations'
 import { normalizeSlotsForSchedule } from '../lib/slots'
 import { fetchState, postAction, isUsingMock } from '../api/client'
-import { enqueue, loadQueue, saveQueue, dequeue } from './writeQueue'
+import {
+  beginInflight,
+  clearQueue,
+  endInflight,
+  enqueueAction,
+  inflightMutationKey,
+  loadQueue,
+  recordAttempt,
+  removeSeq,
+  resetQueueAttempts,
+} from './writeQueue'
 
 type Snackbar = { message: string; id: number } | null
 
@@ -36,6 +47,9 @@ type Store = AppState & {
 }
 
 let snackbarId = 0
+let processing = false
+let processAgain = false
+let retryTimer: ReturnType<typeof setTimeout> | null = null
 
 function cachePayload(state: AppState): string {
   return JSON.stringify({
@@ -62,6 +76,33 @@ function adoptRemote(remote: AppState, localPeople: AppState['people']): AppStat
   }
 }
 
+function adoptWithQueue(remote: AppState, localPeople: AppState['people']): AppState {
+  return applyQueuedWrites(adoptRemote(remote, localPeople), queuePayloads(loadQueue()))
+}
+
+function clearRetryTimer() {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+}
+
+function scheduleRetry(run: () => void, delayMs: number) {
+  clearRetryTimer()
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    run()
+  }, delayMs)
+}
+
+function ackForToggle(state: AppState, slotIndex: number, field: AckField, value: boolean): string | undefined {
+  const slot = state.slots.find((s) => s.index === slotIndex)
+  const person = slot?.personId ? state.people.find((p) => p.id === slot.personId) : null
+  if (field === 'doneAt' && value && person) return `${person.fullName} marked done`
+  if (field === 'doneAt' && !value) return 'Undone'
+  return undefined
+}
+
 export const useStore = create<Store>((set, get) => ({
   ...normalizeState(mockState),
   loading: true,
@@ -75,36 +116,32 @@ export const useStore = create<Store>((set, get) => ({
 
   init: async () => {
     const cached = localStorage.getItem('shrine-cache')
+    const queue = loadQueue()
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as AppState
         if ((parsed.version ?? 0) >= 2) {
-          set({
-            ...normalizeState({
-              ...parsed,
-              people: mergeNeverDone(parsed.people, mockState.people),
-            }),
-            loading: false,
+          const fromCache = normalizeState({
+            ...parsed,
+            people: mergeNeverDone(parsed.people, mockState.people),
           })
+          const merged = applyQueuedWrites(fromCache, queuePayloads(queue))
+          set({ ...merged, loading: false, queueCount: queue.length })
         } else {
-          set({ loading: false })
+          set({ loading: false, queueCount: queue.length })
         }
       } catch {
-        set({ loading: false })
+        set({ loading: false, queueCount: queue.length })
       }
     } else {
-      set({ loading: false })
+      set({ loading: false, queueCount: queue.length })
     }
-
-    const queue = loadQueue()
-    set({ queueCount: queue.length })
 
     if (!isUsingMock()) {
       const remote = await fetchState()
       if (remote) {
-        const adopted = adoptRemote(remote, get().people)
-        const merged = applyQueuedWrites(adopted, loadQueue())
-        set({ ...merged, loading: false, offline: false })
+        const merged = adoptWithQueue(remote, get().people)
+        set({ ...merged, loading: false, offline: false, queueCount: loadQueue().length })
         persist(merged)
       } else if (!cached) {
         set({ offline: true })
@@ -118,9 +155,8 @@ export const useStore = create<Store>((set, get) => ({
     if (isUsingMock()) return
     const remote = await fetchState()
     if (remote) {
-      const adopted = adoptRemote(remote, get().people)
-      const merged = applyQueuedWrites(adopted, loadQueue())
-      set({ ...merged, offline: false })
+      const merged = adoptWithQueue(remote, get().people)
+      set({ ...merged, offline: false, queueCount: loadQueue().length })
       persist(merged)
     }
   },
@@ -142,25 +178,14 @@ export const useStore = create<Store>((set, get) => ({
     const state = get()
     const slot = state.slots.find((s) => s.index === slotIndex)
     if (!slot) return
-    const current = slot[field]
-    const value = !current
-
+    const value = !slot[field]
     const action: WriteAction = { action: 'setAck', slot: slotIndex, field, value }
     const next = applyWrite(state, action)
     set({ ...next })
     persist(next)
-
-    const person = value && field === 'doneAt' && slot.personId
-      ? state.people.find((p) => p.id === slot.personId)
-      : null
-    if (person && value && field === 'doneAt') {
-      get().showSnackbar(`${person.fullName} marked done`)
-    } else if (!value && field === 'doneAt') {
-      get().showSnackbar('Undone')
-    }
-
-    enqueue(action)
-    set({ queueCount: loadQueue().length, bannerDismissed: false })
+    clearRetryTimer()
+    const queue = enqueueAction(action, ackForToggle(state, slotIndex, field, value))
+    set({ queueCount: queue.length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -169,9 +194,9 @@ export const useStore = create<Store>((set, get) => ({
     const next = applyWrite(get(), action)
     set({ ...next })
     persist(next)
-    get().showSnackbar('Slot updated')
-    enqueue(action)
-    set({ queueCount: loadQueue().length, bannerDismissed: false })
+    clearRetryTimer()
+    const queue = enqueueAction(action, 'Slot updated')
+    set({ queueCount: queue.length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -183,11 +208,13 @@ export const useStore = create<Store>((set, get) => ({
     set({ ...next })
     persist(next)
     const person = state.people.find((p) => p.id === personId)
-    if (person && !available && cleared > 0) {
-      get().showSnackbar(`${person.fullName} marked not available · ${cleared} future slot${cleared > 1 ? 's' : ''} back to TBD`)
-    }
-    enqueue(action)
-    set({ queueCount: loadQueue().length, bannerDismissed: false })
+    const ackMessage =
+      person && !available && cleared > 0
+        ? `${person.fullName} marked not available · ${cleared} future slot${cleared > 1 ? 's' : ''} back to TBD`
+        : undefined
+    clearRetryTimer()
+    const queue = enqueueAction(action, ackMessage)
+    set({ queueCount: queue.length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -196,8 +223,9 @@ export const useStore = create<Store>((set, get) => ({
     const next = applyWrite(get(), action)
     set({ ...next })
     persist(next)
-    enqueue(action)
-    set({ queueCount: loadQueue().length, bannerDismissed: false })
+    clearRetryTimer()
+    const queue = enqueueAction(action)
+    set({ queueCount: queue.length, bannerDismissed: false })
     get().processQueue()
   },
 
@@ -218,53 +246,100 @@ export const useStore = create<Store>((set, get) => ({
 
     const result = await postAction({ action: 'book', slot: slotIndex, personId })
     if (result.ok && result.state) {
-      const adopted = adoptRemote(result.state, get().people)
-      set({ ...adopted })
+      const adopted = adoptWithQueue(result.state, get().people)
+      set({ ...adopted, queueCount: loadQueue().length })
       persist(adopted)
       get().showSnackbar('Slot booked')
       return { ok: true }
     }
     if (result.state) {
-      set({ ...adoptRemote(result.state, get().people) })
+      const adopted = adoptWithQueue(result.state, get().people)
+      set({ ...adopted, queueCount: loadQueue().length })
     }
     return { ok: false, reason: result.reason }
   },
 
   processQueue: async () => {
-    if (isUsingMock()) {
-      saveQueue([])
-      set({ queueCount: 0, offline: false, lastFailure: null })
+    if (processing) {
+      processAgain = true
       return
     }
+    processing = true
+    processAgain = false
 
-    let queue = loadQueue()
-    set({ queueCount: queue.length })
+    try {
+      if (isUsingMock()) {
+        const queue = loadQueue()
+        const last = queue[queue.length - 1]
+        clearQueue()
+        endInflight()
+        set({ queueCount: 0, offline: false, lastFailure: null })
+        if (last?.ackMessage) get().showSnackbar(last.ackMessage)
+        return
+      }
 
-    while (queue.length > 0) {
-      const action = queue[0]
-      const result = await postAction(action)
-      if (result.ok) {
-        dequeue()
-        queue = loadQueue()
-        if (result.state) {
-          const adopted = adoptRemote(result.state, get().people)
-          const merged = applyQueuedWrites(adopted, queue)
-          set({ ...merged })
-          persist(merged)
+      while (true) {
+        const queue = loadQueue()
+        set({ queueCount: queue.length })
+        if (queue.length === 0) {
+          endInflight()
+          set({ lastFailure: null, offline: false })
+          break
         }
-        set({ queueCount: queue.length, lastFailure: null, offline: false })
-      } else {
+
+        const item = queue[0]
+        if (!canAutoRetry(item.attempts)) {
+          endInflight()
+          break
+        }
+
+        beginInflight(inflightMutationKey(item.payload))
+        const result = await postAction(item.payload, {
+          clientId: item.clientId,
+          seq: item.seq,
+        })
+
+        if (result.ok) {
+          const remaining = removeSeq(item.seq)
+          endInflight()
+          if (result.state) {
+            const merged = adoptWithQueue(result.state, get().people)
+            set({ ...merged })
+            persist(merged)
+          }
+          set({ queueCount: remaining.length, lastFailure: null, offline: false })
+          if (remaining.length === 0 && item.ackMessage) {
+            get().showSnackbar(item.ackMessage)
+          }
+          continue
+        }
+
+        const updated = recordAttempt(item.seq)
+        const attempts = updated?.attempts ?? item.attempts + 1
+        endInflight()
         set({
           offline: true,
           lastFailure: result.failure ?? null,
-          queueCount: queue.length,
+          queueCount: loadQueue().length,
         })
+        if (canAutoRetry(attempts)) {
+          processAgain = false
+          scheduleRetry(() => get().processQueue(), backoffDelayMs(attempts - 1))
+        }
         break
+      }
+    } finally {
+      processing = false
+      if (processAgain) {
+        processAgain = false
+        get().processQueue()
       }
     }
   },
 
   retryFailed: () => {
+    resetQueueAttempts()
+    clearRetryTimer()
     get().processQueue()
   },
 }))

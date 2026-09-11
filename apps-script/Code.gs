@@ -153,23 +153,71 @@ function doPost(e) {
   }
 }
 
+function mutationFieldKey(body) {
+  switch (body.action) {
+    case 'setAck':
+      return 'seq:slot:' + body.slot + ':' + body.field;
+    case 'assign':
+    case 'book':
+      return 'seq:slot:' + body.slot + ':personId';
+    case 'setAvailability':
+      return 'seq:person:' + body.personId + ':available';
+    case 'setBackup':
+      return 'seq:person:' + body.personId + ':backup';
+    default:
+      return null;
+  }
+}
+
+function lastAppliedSeq(body) {
+  const key = mutationFieldKey(body);
+  if (!key) return 0;
+  return Number(PropertiesService.getScriptProperties().getProperty(key) || '0');
+}
+
+function rememberSeq(body) {
+  const seq = Number(body.seq);
+  if (!seq) return;
+  const key = mutationFieldKey(body);
+  if (key) PropertiesService.getScriptProperties().setProperty(key, String(seq));
+}
+
+function shouldApplySeq(body) {
+  const seq = Number(body.seq);
+  if (!seq) return true;
+  return seq > lastAppliedSeq(body);
+}
+
 function handleMutation(body) {
+  if (!shouldApplySeq(body)) {
+    return { ok: true, ignored: true, state: readState() };
+  }
+
   const action = body.action;
+  let result;
 
   switch (action) {
     case 'setAck':
-      return setAck(body.slot, body.field, body.value);
+      result = setAck(body.slot, body.field, body.value);
+      break;
     case 'assign':
-      return assignSlot(body.slot, body.personId);
+      result = assignSlot(body.slot, body.personId);
+      break;
     case 'setAvailability':
-      return setAvailability(body.personId, body.available);
+      result = setAvailability(body.personId, body.available);
+      break;
     case 'setBackup':
-      return setBackup(body.personId, body.backup);
+      result = setBackup(body.personId, body.backup);
+      break;
     case 'book':
-      return bookSlot(body.slot, body.personId);
+      result = bookSlot(body.slot, body.personId);
+      break;
     default:
       return { ok: false, reason: 'unknown action' };
   }
+
+  if (result && result.ok) rememberSeq(body);
+  return result;
 }
 
 function readState() {

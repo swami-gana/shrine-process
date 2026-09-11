@@ -5,7 +5,7 @@ import { PersonPicker } from './PersonPicker'
 import { bookableSlotIndices, formatSlotRange, formatMonthYear, slotStart } from '../lib/slots'
 import { getPersonById, prevPersonId } from '../lib/derived'
 
-export function BookView() {
+export function BookView({ poll = false }: { poll?: boolean }) {
   const people = useStore((s) => s.people)
   const slots = useStore((s) => s.slots)
   const bookSlot = useStore((s) => s.bookSlot)
@@ -17,10 +17,11 @@ export function BookView() {
   const [confirmation, setConfirmation] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!poll) return
     refresh()
     const interval = setInterval(refresh, 30000)
     return () => clearInterval(interval)
-  }, [refresh])
+  }, [poll, refresh])
 
   const bookable = useMemo(() => bookableSlotIndices(), [])
 
