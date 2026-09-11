@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Person } from '../types'
-import { personStatusLine, sortNextUp } from './derived'
+import { getPersonById, personStatusLine, sortNextUp } from './derived'
 
 function person(partial: Partial<Person> & Pick<Person, 'name'>): Person {
   return {
@@ -59,5 +59,13 @@ describe('sortNextUp', () => {
       person({ name: 'Hidden', available: false, neverDone: true }),
     ])
     expect(sorted.map((p) => p.name)).toEqual(['Al', 'Bo', 'Ann', 'Cy', 'Zed'])
+  })
+})
+
+describe('getPersonById', () => {
+  it('matches a numeric sheet personId to a string people id', () => {
+    const roster = [person({ id: '113', name: 'Mugdha', title: 'Maa', fullName: 'Maa Mugdha' })]
+    expect(getPersonById(roster, 113 as unknown as string)?.fullName).toBe('Maa Mugdha')
+    expect(getPersonById(roster, '113')?.fullName).toBe('Maa Mugdha')
   })
 })

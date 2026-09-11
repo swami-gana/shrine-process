@@ -275,7 +275,7 @@ function readSlotsRaw() {
     if (row[0] === '' || row[0] === null) continue;
     slots.push({
       index: Number(row[0]),
-      personId: row[1] || null,
+      personId: row[1] === '' || row[1] === null ? null : String(row[1]),
       confirmedAt: row[2] || null,
       kitAckAt: row[3] || null,
       doneAt: row[4] || null,
@@ -421,7 +421,7 @@ function recomputeLastDone(people, slots) {
   return people.map((p) => {
     let latest = null;
     slots.forEach((s) => {
-      if (s.personId === p.id && s.doneAt) {
+      if (String(s.personId) === String(p.id) && s.doneAt) {
         const end = slotEnd(s.index);
         if (!latest || end > latest) latest = end;
       }

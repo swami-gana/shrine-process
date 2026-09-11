@@ -32,7 +32,7 @@ export function isBatchComplete(slots: Slot[], batch: number): boolean {
 export function computeLastDone(personId: string, slots: Slot[]): string | null {
   let latest: Date | null = null
   for (const s of slots) {
-    if (s.personId === personId && s.doneAt) {
+    if (String(s.personId) === String(personId) && s.doneAt) {
       const end = slotEnd(s.index)
       if (!latest || end > latest) latest = end
     }
@@ -72,9 +72,10 @@ export function nextPersonId(slots: Slot[], index: number): string | null {
   return next?.personId ?? null
 }
 
-export function getPersonById(people: Person[], id: string | null): Person | undefined {
-  if (!id) return undefined
-  return people.find((p) => p.id === id)
+export function getPersonById(people: Person[], id: string | number | null): Person | undefined {
+  if (id === null || id === undefined || id === '') return undefined
+  const key = String(id)
+  return people.find((p) => String(p.id) === key)
 }
 
 export function bestContact(person: Person): { value: string; channel: 'email' | 'phone' | 'whatsapp' } | null {

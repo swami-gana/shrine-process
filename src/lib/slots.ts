@@ -107,6 +107,22 @@ export function emptySlot(index: number): Slot {
   return { index, personId: null, confirmedAt: null, kitAckAt: null, doneAt: null }
 }
 
+export function coercePersonId(id: unknown): string | null {
+  if (id === null || id === undefined || id === '') return null
+  return String(id)
+}
+
+export function coerceSlot(slot: Slot): Slot {
+  return {
+    ...slot,
+    index: Number(slot.index),
+    personId: coercePersonId(slot.personId),
+    confirmedAt: slot.confirmedAt ? String(slot.confirmedAt) : null,
+    kitAckAt: slot.kitAckAt ? String(slot.kitAckAt) : null,
+    doneAt: slot.doneAt ? String(slot.doneAt) : null,
+  }
+}
+
 export function seedPastSlotDone(slot: Slot): Slot {
   if (slot.personId && !slot.doneAt && isPastSlot(slot.index)) {
     return { ...slot, doneAt: slotEnd(slot.index).toISOString() }

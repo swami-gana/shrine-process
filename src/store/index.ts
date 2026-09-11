@@ -3,7 +3,8 @@ import type { AckField, AppState, WriteAction, WriteFailure } from '../types'
 import { mockState } from '../data/mock'
 import { applyQueuedWrites, applyWrite, countFutureSlotsCleared, mergeNeverDone } from '../lib/applyWrite'
 import { canAutoRetry, backoffDelayMs, queuePayloads } from '../lib/mutations'
-import { normalizeSlotsForSchedule } from '../lib/slots'
+import { recomputeAllLastDone } from '../lib/derived'
+import { coerceSlot, normalizeSlotsForSchedule } from '../lib/slots'
 import { fetchState, postAction, isUsingMock } from '../api/client'
 import {
   beginInflight,
@@ -65,7 +66,13 @@ function persist(state: AppState) {
 }
 
 function normalizeState(state: AppState): AppState {
-  return { ...state, slots: normalizeSlotsForSchedule(state.slots) }
+  const people = state.people.map((p) => ({ ...p, id: String(p.id) }))
+  const slots = normalizeSlotsForSchedule(state.slots.map(coerceSlot))
+  return {
+    ...state,
+    people: recomputeAllLastDone(people, slots),
+    slots,
+  }
 }
 
 function adoptRemote(remote: AppState, localPeople: AppState['people']): AppState {
