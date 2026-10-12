@@ -86,6 +86,11 @@ export type WriteAction =
   | { action: 'confirmRequest'; requestId: string }
   | { action: 'cancelRequest'; requestId: string }
   | { action: 'reopenRequest'; requestId: string }
+  | {
+      action: 'seedFromApp'
+      slots: Slot[]
+      people: Pick<Person, 'id' | 'available' | 'backup' | 'neverDone'>[]
+    }
 
 export type WriteFailure = {
   at: string

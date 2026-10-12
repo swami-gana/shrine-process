@@ -6,7 +6,9 @@ repo). The live sheet may have drifted since; `auditRoster()` in
 
 ## Swami Jiva "duplicate" (CR-141)
 
-There is only one Swami Jiva row. **Swami Jiva and Swami Vajrabala share Br. No. 325.**
+There is only one Swami Jiva row. **Swami Jiva and Swami Vajrabala share Br. No. 325** — in
+the master "BR Names List" tab of BR Process 2026 itself, so it is a data-entry clash at the
+source, not something the app introduced. One of the two numbers is probably wrong there.
 The sheet import used Br. No. as the person id, so both got id `325`. The app then showed
 one person in place of the other, and the "not available" flag on the second row was
 really Vajrabala's: his In Ashram cell is blank. A re-import also copied Vajrabala's flags
@@ -49,19 +51,22 @@ All 14 names match exactly one person on the full roster.
     Vasuprabha, tell me and I'll switch it.
 - **Already not available** in the source data (In Ashram blank or "ssb"): Guruvira,
   Lavana, Nandaka, Shantin, Rukma, Ambara, Vasunanda, Gnana.
-- **Changed to not available:** Kunsi, Potri, Samabuddhi, Kalaghata, Dhiraja, Jiva.
-- **Swami Jiva** ends as one record with backup = true and available = false (CR-148).
-- **"Forson"** (OP-123) has no match on the full roster, not even a near one. Not applied.
-  Please send the spelling.
+- **Changed to not available:** Kunsi, Potri, Samabuddhi, Kalaghata, Dhiraja.
+- **Swami Jiva** stays **available** (owner's decision, 12 Oct): he is expected to recover
+  before his 17–19 Nov slot, which he keeps. He is set to backup = true (CR-148).
+- **"Forson"** dropped (owner's decision, 12 Oct).
 
-**Future slots that go back to TBD (CR-150), from the source data:**
-- **17–19 Nov**, Swami Jiva
+**Future slots that go back to TBD (CR-150), from the source data:** none.
 
 `applyAvailabilityUpdates()` writes the real list from the live sheet to the `Report` tab.
 
 ## OP-124, temporary versus permanent
 
-Option (c) is supported as asked: the CR-150 list above, and the one in the `Report` tab,
-is the record of whose slots were emptied. Swami Jiva is injured and expected back, so
-offer 17–19 Nov back to him when he recovers. Marking him available again does not
-restore the slot.
+The `Report` tab lists any slot emptied by these updates, as the record of whose slots to
+offer back. Marking someone available again does not restore a slot.
+
+## Slots checked against BR Process 2026 (12 Oct)
+
+All 43 slots from 12 Sep 2026 to 18 Jan 2027 match the app, except **12–14 Sep**: the sheet
+says Swami Nabha, the app says Swami Yastir. The app is right (owner, 12 Oct). 8–10 Nov is
+empty in both; the owner is giving it to **Maa Dakshina**.

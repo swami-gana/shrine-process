@@ -56,6 +56,16 @@ and must behave the same in both. Add new actions to `mutationKey` and
 - Stable React keys (person id, slot index) and memoised sorts — no re-sort on render
   (CR-107).
 
+## Two sheets
+
+- **Backend sheet** ("Shrine process (pwa backend)") — the app's datastore, every field.
+- **BR Process 2026** — the original sheet others read. `mirrorToBrSheet` in `Code.gs`
+  writes only the person's name into its Shrine Process column whenever a slot's person
+  changes, by any route. It never fails the app's write.
+- Until the app was connected, the schedule lived only in the coordinator's phone. On first
+  connect the app sends it up with `seedFromApp`, which the server accepts only while the
+  Slots tab is empty.
+
 ## Apps Script changes
 
 Edits to `apps-script/*.gs` do nothing until deployed. Claude cannot deploy them. After

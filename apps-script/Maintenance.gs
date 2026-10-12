@@ -13,11 +13,14 @@
 
 const REPORT_SHEET = 'Report';
 
-/** CR-146: exact names only. Row 14 also gets backup = true (CR-148). */
+/**
+ * CR-146: exact names only. Swami Jiva is left available: he is expected to recover before
+ * his 17–19 Nov slot, so that slot stays his. He still gets backup = true (CR-148).
+ */
 const CR146_NOT_AVAILABLE = [
   'Maa Kunsi', 'Maa Potri', 'Maa Samabuddhi', 'Swami Guruvira', 'Swami Kalaghata',
   'Swami Lavana', 'Swami Nandaka', 'Swami Shantin', 'Swami Rukma', 'Swami Ambara',
-  'Swami Dhiraja', 'Swami Vasunanda', 'Maa Gnana', 'Swami Jiva',
+  'Swami Dhiraja', 'Swami Vasunanda', 'Maa Gnana',
 ];
 const CR148_BACKUP = ['Swami Jiva'];
 
@@ -188,6 +191,7 @@ function applyAvailabilityUpdates() {
   const today = startOfDay(new Date());
   const slotsSheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
   const slotData = slotsSheet.getDataRange().getValues();
+  const ownersBefore = slotOwners();
 
   CR146_NOT_AVAILABLE.forEach(function (name) {
     const key = name.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -200,7 +204,6 @@ function applyAvailabilityUpdates() {
     const id = String(r.values[0]);
     const was = isTrue(r.values[4]);
     p.sheet.getRange(r.row, 5).setValue(false);
-    if (CR148_BACKUP.indexOf(name) >= 0) p.sheet.getRange(r.row, 6).setValue(true);
     lines.push(name + ': ' + (was ? 'now not available' : 'was already not available'));
 
     for (let i = 1; i < slotData.length; i++) {
@@ -212,6 +215,17 @@ function applyAvailabilityUpdates() {
       emptied.push({ index: idx, name: name });
     }
   });
+
+  CR148_BACKUP.forEach(function (name) {
+    const key = name.toLowerCase();
+    const r = p.rows.find(function (x) { return personNameKey(x.values[1], x.values[2]) === key; });
+    if (!r) return;
+    p.sheet.getRange(r.row, 6).setValue(true);
+    lines.push(name + ': backup');
+  });
+
+  // Slots emptied here go to the BR Process sheet as blanks too.
+  mirrorToBrSheet(ownersBefore);
 
   bumpVersion();
   lines.push('');

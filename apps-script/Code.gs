@@ -222,6 +222,7 @@ function handleMutation(body) {
   }
 
   const action = body.action;
+  const ownersBefore = slotOwners();
   let result;
 
   switch (action) {
@@ -264,11 +265,17 @@ function handleMutation(body) {
     case 'reopenRequest':
       result = reopenRequest(body.requestId);
       break;
+    case 'seedFromApp':
+      result = seedFromApp(body.slots || [], body.people || []);
+      break;
     default:
       return { ok: false, reason: 'unknown action' };
   }
 
-  if (result && result.ok) rememberSeq(body);
+  if (result && result.ok) {
+    rememberSeq(body);
+    mirrorToBrSheet(ownersBefore);
+  }
   return result;
 }
 
@@ -636,6 +643,121 @@ function reopenRequest(requestId) {
     bumpVersion();
   }
   return { ok: true, state: readState() };
+}
+
+// ---------------------------------------------------------------------------
+// One-time seed: the app held the schedule on the phone before the sheet was live.
+
+/**
+ * Writes the app's schedule and people flags into an empty backend. Refuses if any slot in
+ * the sheet already has a person, so it can never overwrite live data.
+ */
+function seedFromApp(slots, people) {
+  const slotsSheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
+  if (readSlotsRaw().some(function (s) { return s.personId; })) {
+    return { ok: false, reason: 'not empty', state: readState() };
+  }
+  ensureSlotColumns();
+  const rows = slots
+    .filter(function (s) { return s && s.index !== undefined && s.index !== null; })
+    .sort(function (a, b) { return a.index - b.index; })
+    .map(function (s) {
+      return [
+        Number(s.index), s.personId || '', s.confirmedAt || '', s.kitAckAt || '', s.doneAt || '',
+        s.note || '', s.noteUpdatedAt || '',
+      ];
+    });
+  if (slotsSheet.getLastRow() > 1) {
+    slotsSheet.getRange(2, 1, slotsSheet.getLastRow() - 1, SLOT_HEADERS.length).clearContent();
+  }
+  if (rows.length) slotsSheet.getRange(2, 1, rows.length, SLOT_HEADERS.length).setValues(rows);
+
+  ensurePeopleNeverDoneColumn();
+  const peopleSheet = getSpreadsheet().getSheetByName(SHEETS.PEOPLE);
+  const data = peopleSheet.getDataRange().getValues();
+  const neverCol = data[0].indexOf('neverDone');
+  const byId = {};
+  people.forEach(function (p) { byId[String(p.id)] = p; });
+  for (let i = 1; i < data.length; i++) {
+    const p = byId[String(data[i][0])];
+    if (!p) continue;
+    data[i][4] = !!p.available;
+    data[i][5] = !!p.backup;
+    if (neverCol >= 0) data[i][neverCol] = !!p.neverDone;
+  }
+  if (data.length > 1) {
+    peopleSheet.getRange(2, 1, data.length - 1, data[0].length).setValues(data.slice(1));
+  }
+  bumpVersion();
+  return { ok: true, state: readState() };
+}
+
+// ---------------------------------------------------------------------------
+// Mirror to the original BR Process sheet: name only, in the Shrine Process column.
+
+const BR_SHEET_ID_PROP = 'BR_SHEET_ID';
+const BR_SHEET_ID_DEFAULT = '1qeCKfehPv-pGXM7EZNL79Z26RKCSw9ucvXzZPj0TN-k';
+const BR_TAB = 'Reserve Your BR Process Date he';
+const BR_FIRST_YEAR = 2026;
+const BR_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+
+function slotOwners() {
+  const map = {};
+  readSlotsRaw().forEach(function (s) { map[s.index] = s.personId || ''; });
+  return map;
+}
+
+/** Writes the new name for every slot whose person changed. Never fails the app's write. */
+function mirrorToBrSheet(before) {
+  try {
+    const after = slotOwners();
+    const changed = Object.keys(after).filter(function (k) { return (before[k] || '') !== after[k]; });
+    Object.keys(before).forEach(function (k) {
+      if (!(k in after) && before[k]) changed.push(k);
+    });
+    if (!changed.length) return;
+
+    const names = {};
+    readPeople().forEach(function (p) { names[p.id] = p.fullName; });
+
+    const id = PropertiesService.getScriptProperties().getProperty(BR_SHEET_ID_PROP) || BR_SHEET_ID_DEFAULT;
+    const sheet = SpreadsheetApp.openById(id).getSheetByName(BR_TAB);
+    if (!sheet) return;
+    const values = sheet.getDataRange().getDisplayValues();
+    const cols = findShrineProcessColumns(values);
+    if (!cols || cols.startCol < 0) return;
+    const rowByDate = brRowsByDate(values, cols);
+
+    changed.forEach(function (k) {
+      const index = Number(k);
+      const row = rowByDate[formatDateISO(slotStart(index))];
+      if (row === undefined) {
+        Logger.log('BR mirror: no row for ' + formatSlotRange(index));
+        return;
+      }
+      const name = after[k] ? (names[after[k]] || '') : '';
+      if (values[row][cols.nameCol] !== name) sheet.getRange(row + 1, cols.nameCol + 1).setValue(name);
+    });
+  } catch (err) {
+    Logger.log('BR mirror failed: ' + err);
+  }
+}
+
+/** Start dates in the sheet read like "Nov-8"; the year rolls over when the month goes back. */
+function brRowsByDate(values, cols) {
+  const map = {};
+  let year = BR_FIRST_YEAR;
+  let lastMonth = -1;
+  for (let r = cols.headerRow + 1; r < values.length; r++) {
+    const m = String(values[r][cols.startCol] || '').trim().match(/^([A-Za-z]{3})[A-Za-z]*[-\s]+(\d{1,2})/);
+    if (!m) continue;
+    const month = BR_MONTHS[m[1].toLowerCase()];
+    if (month === undefined) continue;
+    if (month < lastMonth) year++;
+    lastMonth = month;
+    map[formatDateISO(new Date(year, month, Number(m[2])))] = r;
+  }
+  return map;
 }
 
 function findSlotRow(sheet, index) {

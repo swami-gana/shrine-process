@@ -26,6 +26,8 @@ export function mutationKey(action: WriteAction): string {
     case 'cancelRequest':
     case 'reopenRequest':
       return `request:${action.requestId}:status`
+    case 'seedFromApp':
+      return 'seed'
     case 'setAvailability':
       return `person:${action.personId}:available`
     case 'setBackup':

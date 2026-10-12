@@ -109,6 +109,35 @@ function adoptWithQueue(remote: AppState, localPeople: AppState['people']): AppS
   return applyQueuedWrites(adoptRemote(remote, localPeople), queuePayloads(loadQueue()))
 }
 
+let seeding = false
+
+/**
+ * The schedule lived only on this phone before the sheet was connected. If the sheet has no
+ * one in any slot but this phone does, send this phone's schedule up instead of adopting an
+ * empty one — the server refuses unless the Slots tab is still empty.
+ * Returns the state to adopt, or null to keep what is on screen.
+ */
+async function reconcileRemote(remote: AppState, local: AppState): Promise<AppState | null> {
+  const remoteFilled = (remote.slots ?? []).some((s) => s.personId)
+  const localFilled = local.slots.some((s) => s.personId)
+  if (remoteFilled || !localFilled) return remote
+  // Only the coordinator's phone holds the real schedule; /book must never seed.
+  if (window.location.pathname.startsWith('/book')) return null
+  if (seeding) return null
+  seeding = true
+  try {
+    const result = await postAction({
+      action: 'seedFromApp',
+      slots: local.slots,
+      people: local.people.map(({ id, available, backup, neverDone }) => ({ id, available, backup, neverDone })),
+    })
+    if (result.state && (result.state.slots ?? []).some((s) => s.personId)) return result.state
+    return null
+  } finally {
+    seeding = false
+  }
+}
+
 function clearRetryTimer() {
   if (retryTimer) {
     clearTimeout(retryTimer)
@@ -179,12 +208,13 @@ export const useStore = create<Store>((set, get) => {
     }
 
     if (!isUsingMock()) {
-      const remote = await fetchState()
+      const fetched = await fetchState()
+      const remote = fetched ? await reconcileRemote(fetched, get()) : null
       if (remote) {
         const merged = adoptWithQueue(remote, get().people)
         set({ ...merged, loading: false, offline: false, queueCount: loadQueue().length })
         persist(merged)
-      } else if (!cached) {
+      } else if (!fetched && !cached) {
         set({ offline: true })
       }
     }
@@ -194,7 +224,8 @@ export const useStore = create<Store>((set, get) => {
 
   refresh: async () => {
     if (isUsingMock()) return
-    const remote = await fetchState()
+    const fetched = await fetchState()
+    const remote = fetched ? await reconcileRemote(fetched, get()) : null
     if (remote) {
       const merged = adoptWithQueue(remote, get().people)
       set({ ...merged, offline: false, queueCount: loadQueue().length })
