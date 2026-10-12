@@ -31,6 +31,10 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // The coordinator SOP is a standalone static page: keep it out of the
+        // precache and stop the SPA fallback from swallowing /sop navigations.
+        globIgnores: ['**/sop.html'],
+        navigateFallbackDenylist: [/^\/sop(\.html)?$/],
       },
     }),
   ],
