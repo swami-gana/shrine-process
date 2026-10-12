@@ -18,7 +18,7 @@ const person: Person = {
 }
 
 function state(slots: Slot[]): AppState {
-  return { people: [person], slots, templates: [], version: 1 }
+  return { people: [person], slots, templates: [], requests: [], version: 1 }
 }
 
 describe('applyQueuedWrites', () => {
@@ -41,6 +41,7 @@ describe('applyQueuedWrites', () => {
       people: [never],
       slots: [{ index: 0, personId: '1', confirmedAt: null, kitAckAt: null, doneAt: null }],
       templates: [],
+      requests: [],
       version: 1,
     }
     const after = applyWrite(before, { action: 'setAck', slot: 0, field: 'doneAt', value: true })

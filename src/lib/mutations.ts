@@ -14,7 +14,18 @@ export function mutationKey(action: WriteAction): string {
       return `slot:${action.slot}:${action.field}`
     case 'assign':
     case 'book':
+    case 'unbook':
+    case 'removePerson':
+    case 'restoreSlot':
       return `slot:${action.slot}:personId`
+    case 'setNote':
+      return `slot:${action.slot}:note`
+    case 'createRequest':
+      return `request:${action.requestId}:create`
+    case 'confirmRequest':
+    case 'cancelRequest':
+    case 'reopenRequest':
+      return `request:${action.requestId}:status`
     case 'setAvailability':
       return `person:${action.personId}:available`
     case 'setBackup':

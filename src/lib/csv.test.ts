@@ -118,3 +118,21 @@ describe('roster seed', () => {
     expect(slots.find((s) => s.index === 20)?.doneAt).toBeNull()
   })
 })
+
+describe('roster normalisation (CR-142)', () => {
+  it('merges rows whose names differ only by spacing or case, and keeps both contacts', async () => {
+    const { parseRosterCsv } = await import('./csv')
+    const csv = [
+      'Br. No.,Name,Meaning,Contact No,Comm.,Email ID,In Ashram,Dept.',
+      '10,Swami  Jiva ,x,9999,WA,,yes,A',
+      '11,swami jiva,x,,,swami.jiva@example.org,yes,A',
+      '10,Swami Vajrabala,x,8888,WA,,,B',
+    ].join('\n')
+    const { people, mergedNames, duplicateIds } = parseRosterCsv(csv)
+    expect(people.map((p) => p.fullName)).toEqual(['Swami Jiva', 'Swami Vajrabala'])
+    expect(people[0]).toMatchObject({ whatsapp: '9999', email: 'swami.jiva@example.org' })
+    expect(mergedNames).toHaveLength(1)
+    expect(duplicateIds).toEqual(['10'])
+    expect(new Set(people.map((p) => p.id)).size).toBe(2)
+  })
+})

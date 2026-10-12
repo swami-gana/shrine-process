@@ -24,6 +24,7 @@ function generateMockState(): AppState {
     people: recomputeAllLastDone(people, slots),
     slots,
     templates: DEFAULT_TEMPLATES,
+    requests: [],
     version: 2,
   }
 }

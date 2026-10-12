@@ -3,7 +3,7 @@ import clsx from 'clsx'
 
 type Props = {
   icon: LucideIcon
-  badge: 'exclaim' | 'x' | 'check'
+  badge: 'exclaim' | 'question' | 'x' | 'check' | 'arrow'
   className?: string
 }
 
@@ -14,6 +14,25 @@ export function BadgeIcon({ icon: Icon, badge, className }: Props) {
       {badge === 'exclaim' && (
         <span className="absolute -right-0.5 -bottom-0.5 w-3 h-3 rounded-full bg-surface-2 text-text-2 flex items-center justify-center text-[9px] font-semibold leading-none">
           !
+        </span>
+      )}
+      {badge === 'question' && (
+        <span className="absolute -right-0.5 -bottom-0.5 w-3 h-3 rounded-full bg-surface-2 text-text-2 flex items-center justify-center text-[9px] font-semibold leading-none">
+          ?
+        </span>
+      )}
+      {badge === 'arrow' && (
+        <span className="absolute -right-0.5 -bottom-0.5 w-3 h-3 rounded-full bg-surface-2 text-text-2 flex items-center justify-center">
+          <svg viewBox="0 0 12 12" width="9" height="9" aria-hidden>
+            <path
+              d="M2.5 6h7M6.5 3l3 3-3 3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </span>
       )}
       {badge === 'x' && (

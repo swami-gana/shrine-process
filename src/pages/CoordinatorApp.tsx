@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
+import clsx from 'clsx'
+import { Link2 } from 'lucide-react'
 import { useStore } from '../store'
 import { useClickOutside } from '../hooks/useClickOutside'
 import { copyPlainText } from '../lib/clipboard'
@@ -48,10 +50,19 @@ export function CoordinatorApp() {
     setTab(newTab)
   }
 
+  const [linkFlash, setLinkFlash] = useState(false)
+
+  const copySchedulingLink = () => {
+    copyPlainText(`${window.location.origin}/book`)
+    showSnackbar('Scheduling link copied')
+    setLinkFlash(true)
+    setTimeout(() => setLinkFlash(false), 200)
+  }
+
   const headerTitle = () => {
     switch (tab) {
       case 'list':
-        return `Brahmachari List (${people.length})`
+        return 'Brahmachari List'
       case 'schedule':
         return 'Schedule'
       case 'book':
@@ -62,18 +73,24 @@ export function CoordinatorApp() {
   return (
     <div className="h-dvh flex flex-col bg-bg overflow-hidden">
       <StatusBar />
-      <header className="px-4 pt-4 pb-2 bg-bg flex items-center justify-between shrink-0">
-        <h1 className="font-serif text-[28px] leading-[1.15] font-normal text-text-1">{headerTitle()}</h1>
+      <header className="px-4 pt-4 pb-2 bg-bg flex items-center gap-2 shrink-0 min-h-[60px]">
+        <h1 className="flex-1 min-w-0 flex items-baseline gap-2 whitespace-nowrap">
+          <span className="shrink-0 font-serif text-[28px] leading-[1.15] font-normal text-text-1">{headerTitle()}</span>
+          {tab === 'list' && (
+            <span className="min-w-0 truncate text-[14px] text-text-3 tabular">{people.length}</span>
+          )}
+        </h1>
         {tab === 'list' && (
           <button
             type="button"
-            onClick={() => {
-              copyPlainText(`${window.location.origin}/book`)
-              showSnackbar('Scheduling link copied')
-            }}
-            className="text-[13px] text-ember font-medium pressable"
+            onClick={copySchedulingLink}
+            aria-label="Copy scheduling link"
+            className={clsx(
+              'shrink-0 -mr-2 w-11 h-11 flex items-center justify-center rounded-full text-ember pressable transition-colors duration-200',
+              linkFlash && 'bg-ember/20',
+            )}
           >
-            Copy scheduling link
+            <Link2 size={24} strokeWidth={1.75} absoluteStrokeWidth />
           </button>
         )}
       </header>

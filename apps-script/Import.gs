@@ -13,6 +13,7 @@ function importPeopleFromSheet() {
   }
 
   const peopleSheet = ss.getSheetByName('People');
+  // Keyed by normalised name, not Br. No.: two people can share a Br. No. (CR-141).
   const existing = {};
   const existingData = peopleSheet.getDataRange().getValues();
   const existingHeaders = existingData[0] || [];
@@ -20,7 +21,7 @@ function importPeopleFromSheet() {
   for (let i = 1; i < existingData.length; i++) {
     const id = String(existingData[i][0]);
     if (!id) continue;
-    existing[id] = {
+    existing[personNameKey(existingData[i][1], existingData[i][2])] = {
       available: existingData[i][4] === true || existingData[i][4] === 'TRUE' || existingData[i][4] === 'true',
       backup: existingData[i][5] === true || existingData[i][5] === 'TRUE' || existingData[i][5] === 'true',
       neverDone: neverCol >= 0 && (existingData[i][neverCol] === true || existingData[i][neverCol] === 'TRUE' || existingData[i][neverCol] === 'true'),
@@ -29,11 +30,15 @@ function importPeopleFromSheet() {
 
   const data = importSheet.getDataRange().getValues();
   const rows = [];
+  const rowByName = {};
+  const usedIds = {};
+  const merged = [];
+  const reIded = [];
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const brNo = String(row[0]).trim();
-    const nameCol = String(row[1]).trim();
+    const nameCol = String(row[1]).replace(/\s+/g, ' ').trim();
     const contact = String(row[3] || '').trim();
     const comm = String(row[4] || '').trim();
     const email = String(row[5] || '').trim();
@@ -43,14 +48,35 @@ function importPeopleFromSheet() {
 
     const parsed = parseTitleName(nameCol);
     const contacts = parseComm(comm, contact, email);
+    const nameKey = personNameKey(parsed.title, parsed.name);
+
+    // CR-142: rows that normalise to the same title + name are one person.
+    if (rowByName[nameKey] !== undefined) {
+      const kept = rows[rowByName[nameKey]];
+      if (!kept[6]) kept[6] = contacts.email;
+      if (!kept[7]) kept[7] = contacts.phone;
+      if (!kept[8]) kept[8] = contacts.whatsapp;
+      merged.push(parsed.fullName + ' (sheet row ' + (i + 1) + ')');
+      continue;
+    }
+
+    // Two different people sharing a Br. No. get distinct ids, as the app does.
+    let id = brNo;
+    if (usedIds[id]) {
+      id = brNo + ':' + parsed.name;
+      reIded.push(parsed.fullName + ' → ' + id);
+    }
+    usedIds[id] = true;
+
     const seededAvailable = isInAshram(inAshram);
-    const prev = existing[brNo];
+    const prev = existing[nameKey];
     const available = prev && prev.available === false ? false : seededAvailable;
     const neverDone = isNeverDone(parsed.title, parsed.name) || !!(prev && prev.neverDone);
     const backup = isBackupSeed(parsed.fullName) ? true : (prev ? prev.backup : false);
 
+    rowByName[nameKey] = rows.length;
     rows.push([
-      brNo, parsed.title, parsed.name, parsed.fullName,
+      id, parsed.title, parsed.name, parsed.fullName,
       available, backup,
       contacts.email, contacts.phone, contacts.whatsapp, '',
       neverDone,
@@ -65,6 +91,8 @@ function importPeopleFromSheet() {
   }
 
   Logger.log('Imported ' + rows.length + ' people.');
+  if (merged.length) Logger.log('Merged duplicate rows: ' + merged.join(', '));
+  if (reIded.length) Logger.log('Shared Br. No., given a distinct id: ' + reIded.join(', '));
 }
 
 function importSlotsFromSheet() {
@@ -325,13 +353,18 @@ function seedNeverDoneFromList() {
   Logger.log('Seeded neverDone for ' + n + ' people.');
 }
 
+/** CR-142: trim, collapse whitespace, compare title + name case-insensitively. */
+function personNameKey(title, name) {
+  return (String(title || '') + ' ' + String(name || '')).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 function parseTitleName(full) {
-  const trimmed = full.trim();
-  if (trimmed.indexOf('Swami ') === 0) {
-    return { title: 'Swami', name: trimmed.slice(6), fullName: trimmed };
-  }
-  if (trimmed.indexOf('Maa ') === 0) {
-    return { title: 'Maa', name: trimmed.slice(4), fullName: trimmed };
+  const trimmed = String(full).replace(/\s+/g, ' ').trim();
+  const prefix = trimmed.match(/^(swami|maa) /i);
+  if (prefix) {
+    const title = prefix[1].toLowerCase() === 'maa' ? 'Maa' : 'Swami';
+    const name = trimmed.slice(prefix[0].length);
+    return { title: title, name: name, fullName: title + ' ' + name };
   }
   return { title: 'Swami', name: trimmed, fullName: trimmed };
 }

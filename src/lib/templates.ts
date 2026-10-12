@@ -139,4 +139,15 @@ After your 3 days, pls refill and hand over to {{next_person}} 🙏`,
       ta: '',
     },
   },
+  {
+    id: 'availability_request',
+    label: 'Availability request',
+    scope: 'empty_slot',
+    channel: 'message',
+    subject: { en: null, ta: null },
+    body: {
+      en: 'Namaskaram Swami/Maa 🙏\n\nWould you be able to do Shrine process from {{slot_dates}}?',
+      ta: '',
+    },
+  },
 ]

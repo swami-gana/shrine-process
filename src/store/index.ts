@@ -1,10 +1,12 @@
 import { create } from 'zustand'
 import type { AckField, AppState, WriteAction, WriteFailure } from '../types'
+import { UNDO_SNACKBAR_MS } from '../config'
 import { mockState } from '../data/mock'
-import { applyQueuedWrites, applyWrite, countFutureSlotsCleared, mergeNeverDone } from '../lib/applyWrite'
+import { applyQueuedWrites, applyWrite, futureSlotsHeld, mergeNeverDone, slotSnapshot } from '../lib/applyWrite'
+import { expireRequests, openRequestFor } from '../lib/requests'
 import { canAutoRetry, backoffDelayMs, queuePayloads } from '../lib/mutations'
 import { recomputeAllLastDone } from '../lib/derived'
-import { coerceSlot, normalizeSlotsForSchedule } from '../lib/slots'
+import { coerceSlot, formatSlotRange, normalizeSlotsForSchedule } from '../lib/slots'
 import { fetchState, postAction, isUsingMock } from '../api/client'
 import {
   beginInflight,
@@ -18,7 +20,8 @@ import {
   resetQueueAttempts,
 } from './writeQueue'
 
-type Snackbar = { message: string; id: number } | null
+type SnackbarAction = { label: string; onAction: () => void }
+type Snackbar = { message: string; id: number; action?: SnackbarAction } | null
 
 type Store = AppState & {
   loading: boolean
@@ -32,7 +35,8 @@ type Store = AppState & {
 
   init: () => Promise<void>
   refresh: () => Promise<void>
-  showSnackbar: (message: string) => void
+  showSnackbar: (message: string, action?: SnackbarAction) => void
+  dismissSnackbar: () => void
   setOpenPanel: (id: string | null) => void
   setSheetOpen: (open: boolean) => void
   dismissBanner: () => void
@@ -42,6 +46,12 @@ type Store = AppState & {
   setAvailability: (personId: string, available: boolean) => void
   setBackup: (personId: string, backup: boolean) => void
   bookSlot: (slotIndex: number, personId: string) => Promise<{ ok: boolean; reason?: string }>
+  unbookSlot: (slotIndex: number, personId: string) => Promise<{ ok: boolean; reason?: string }>
+  removePerson: (slotIndex: number) => void
+  setNote: (slotIndex: number, note: string | null) => void
+  createRequest: (personId: string, slotIndex: number) => void
+  confirmRequest: (requestId: string) => void
+  cancelRequest: (requestId: string) => void
 
   processQueue: () => Promise<void>
   retryFailed: () => void
@@ -57,6 +67,7 @@ function cachePayload(state: AppState): string {
     people: state.people,
     slots: state.slots,
     templates: state.templates,
+    requests: state.requests,
     version: state.version,
   })
 }
@@ -68,8 +79,19 @@ function persist(state: AppState) {
 function normalizeState(state: AppState): AppState {
   const people = state.people.map((p) => ({ ...p, id: String(p.id) }))
   const slots = normalizeSlotsForSchedule(state.slots.map(coerceSlot))
+  const requests = expireRequests(
+    (state.requests ?? []).map((r) => ({
+      ...r,
+      id: String(r.id),
+      personId: String(r.personId),
+      slotIndex: Number(r.slotIndex),
+      createdAt: String(r.createdAt),
+      closedAt: r.closedAt ? String(r.closedAt) : null,
+    })),
+  )
   return {
     ...state,
+    requests,
     people: recomputeAllLastDone(people, slots),
     slots,
   }
@@ -110,7 +132,19 @@ function ackForToggle(state: AppState, slotIndex: number, field: AckField, value
   return undefined
 }
 
-export const useStore = create<Store>((set, get) => ({
+export const useStore = create<Store>((set, get) => {
+  /** Optimistic write: apply locally, persist, queue for the server (CR-14, CR-100). */
+  const commit = (action: WriteAction, ackMessage?: string) => {
+    const next = applyWrite(get(), action)
+    set({ ...next })
+    persist(next)
+    clearRetryTimer()
+    const queue = enqueueAction(action, ackMessage)
+    set({ queueCount: queue.length, bannerDismissed: false })
+    get().processQueue()
+  }
+
+  return {
   ...normalizeState(mockState),
   loading: true,
   offline: false,
@@ -168,14 +202,19 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  showSnackbar: (message) => {
+  showSnackbar: (message, action) => {
     const id = ++snackbarId
-    set({ snackbar: { message, id } })
-    setTimeout(() => {
-      const current = get().snackbar
-      if (current?.id === id) set({ snackbar: null })
-    }, 2100)
+    set({ snackbar: { message, id, action } })
+    setTimeout(
+      () => {
+        const current = get().snackbar
+        if (current?.id === id) set({ snackbar: null })
+      },
+      action ? UNDO_SNACKBAR_MS : 2100,
+    )
   },
+
+  dismissSnackbar: () => set({ snackbar: null }),
 
   setOpenPanel: (id) => set({ openPanelId: id }),
   setSheetOpen: (open) => set({ sheetOpen: open }),
@@ -209,7 +248,7 @@ export const useStore = create<Store>((set, get) => ({
 
   setAvailability: (personId, available) => {
     const state = get()
-    const cleared = !available ? countFutureSlotsCleared(state.slots, personId) : 0
+    const cleared = !available ? futureSlotsHeld(state.slots, personId).length : 0
     const action: WriteAction = { action: 'setAvailability', personId, available }
     const next = applyWrite(state, action)
     set({ ...next })
@@ -247,7 +286,6 @@ export const useStore = create<Store>((set, get) => ({
       const next = applyWrite(state, action)
       set({ ...next })
       persist(next)
-      get().showSnackbar('Slot booked')
       return { ok: true }
     }
 
@@ -256,7 +294,6 @@ export const useStore = create<Store>((set, get) => ({
       const adopted = adoptWithQueue(result.state, get().people)
       set({ ...adopted, queueCount: loadQueue().length })
       persist(adopted)
-      get().showSnackbar('Slot booked')
       return { ok: true }
     }
     if (result.state) {
@@ -264,6 +301,78 @@ export const useStore = create<Store>((set, get) => ({
       set({ ...adopted, queueCount: loadQueue().length })
     }
     return { ok: false, reason: result.reason }
+  },
+
+  unbookSlot: async (slotIndex, personId) => {
+    const action: WriteAction = { action: 'unbook', slot: slotIndex, personId }
+    if (isUsingMock()) {
+      const next = applyWrite(get(), action)
+      set({ ...next })
+      persist(next)
+      return { ok: true }
+    }
+    const result = await postAction(action)
+    if (result.state) {
+      const adopted = adoptWithQueue(result.state, get().people)
+      set({ ...adopted, queueCount: loadQueue().length })
+      persist(adopted)
+    }
+    return { ok: result.ok, reason: result.reason }
+  },
+
+  removePerson: (slotIndex) => {
+    const slot = get().slots.find((s) => s.index === slotIndex)
+    if (!slot?.personId || slot.doneAt) return
+    const snapshot = slotSnapshot(slot)
+    commit({ action: 'removePerson', slot: slotIndex })
+    get().showSnackbar(`Removed — ${formatSlotRange(slotIndex)} is open`, {
+      label: 'Undo',
+      onAction: () => commit({ action: 'restoreSlot', slot: slotIndex, snapshot }),
+    })
+  },
+
+  setNote: (slotIndex, note) => {
+    const cleared = !note || !note.trim()
+    commit({ action: 'setNote', slot: slotIndex, note: cleared ? null : note }, cleared ? 'Note cleared' : 'Note saved')
+  },
+
+  createRequest: (personId, slotIndex) => {
+    const state = get()
+    const person = state.people.find((p) => p.id === personId)
+    if (!person?.available || openRequestFor(state.requests, personId)) return
+    commit(
+      {
+        action: 'createRequest',
+        requestId: crypto.randomUUID(),
+        personId,
+        slot: slotIndex,
+        createdAt: new Date().toISOString(),
+      },
+      `Requested for ${formatSlotRange(slotIndex)}`,
+    )
+  },
+
+  confirmRequest: (requestId) => {
+    const state = get()
+    const req = state.requests.find((r) => r.id === requestId)
+    if (!req || req.status !== 'open') return
+    const slot = state.slots.find((s) => s.index === req.slotIndex)
+    const range = formatSlotRange(req.slotIndex)
+    if (slot?.personId && slot.personId !== req.personId) {
+      const holder = state.people.find((p) => p.id === slot.personId)?.fullName ?? 'someone else'
+      get().showSnackbar(`${range} is already filled by ${holder}`)
+      return
+    }
+    const person = state.people.find((p) => p.id === req.personId)
+    commit({ action: 'confirmRequest', requestId }, `Confirmed — ${person?.fullName ?? 'person'} added to ${range}`)
+  },
+
+  cancelRequest: (requestId) => {
+    commit({ action: 'cancelRequest', requestId })
+    get().showSnackbar('Request cancelled', {
+      label: 'Undo',
+      onAction: () => commit({ action: 'reopenRequest', requestId }),
+    })
   },
 
   processQueue: async () => {
@@ -321,6 +430,23 @@ export const useStore = create<Store>((set, get) => ({
           continue
         }
 
+        if (item.payload.action === 'confirmRequest' && result.reason === 'filled') {
+          // CR-183: the one permitted rollback — the server knows the slot is taken.
+          const remaining = removeSeq(item.seq)
+          endInflight()
+          if (result.state) {
+            const merged = adoptWithQueue(result.state, get().people)
+            set({ ...merged })
+            persist(merged)
+          }
+          set({ queueCount: remaining.length, lastFailure: null, offline: false })
+          const requestId = item.payload.requestId
+          const req = get().requests.find((r) => r.id === requestId)
+          const range = req ? formatSlotRange(req.slotIndex) : 'That slot'
+          get().showSnackbar(`${range} is already filled by ${result.holder ?? 'someone else'}`)
+          continue
+        }
+
         const updated = recordAttempt(item.seq)
         const attempts = updated?.attempts ?? item.attempts + 1
         endInflight()
@@ -349,4 +475,5 @@ export const useStore = create<Store>((set, get) => ({
     clearRetryTimer()
     get().processQueue()
   },
-}))
+  }
+})

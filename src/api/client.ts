@@ -23,10 +23,18 @@ function failure(
   return { at: new Date().toISOString(), action, ...extras }
 }
 
+export type PostResult = {
+  ok: boolean
+  reason?: string
+  holder?: string
+  state?: AppState
+  failure?: WriteFailure
+}
+
 export async function postAction(
   action: WriteAction,
   meta?: { clientId: string; seq: number },
-): Promise<{ ok: boolean; reason?: string; state?: AppState; failure?: WriteFailure }> {
+): Promise<PostResult> {
   if (USE_MOCK) return { ok: true }
   const payload = meta ? { ...action, clientId: meta.clientId, seq: meta.seq } : action
   try {
@@ -43,7 +51,7 @@ export async function postAction(
       return { ok: false, reason: 'http', failure: f }
     }
     try {
-      const parsed = JSON.parse(body) as { ok: boolean; reason?: string; state?: AppState }
+      const parsed = JSON.parse(body) as Omit<PostResult, 'failure'>
       if (!parsed.ok) {
         const f = failure(action, { reachedServer: true, status: res.status, body })
         console.error('Write rejected', f)

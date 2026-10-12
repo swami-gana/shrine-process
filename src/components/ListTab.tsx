@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { useStore } from '../store'
 import { sortNextUp, sortBackup } from '../lib/derived'
+import { openRequestFor, requestCount } from '../lib/requests'
+import type { Person } from '../types'
 import { PersonRow } from './PersonRow'
+import { RequestSlotSheet } from './RequestSlotSheet'
 
 type Filter = 'az' | 'next' | 'backup'
 
@@ -13,8 +16,29 @@ export function ListTab() {
   const showSnackbar = useStore((s) => s.showSnackbar)
   const openPanelId = useStore((s) => s.openPanelId)
   const setOpenPanel = useStore((s) => s.setOpenPanel)
+  const requests = useStore((s) => s.requests)
+  const createRequest = useStore((s) => s.createRequest)
+  const confirmRequest = useStore((s) => s.confirmRequest)
+  const cancelRequest = useStore((s) => s.cancelRequest)
 
   const [filter, setFilter] = useState<Filter>('az')
+  const [requesting, setRequesting] = useState<Person | null>(null)
+
+  const requestInfo = useMemo(() => {
+    const map = new Map<string, { open: ReturnType<typeof openRequestFor>; count: number }>()
+    for (const id of new Set(requests.map((r) => r.personId))) {
+      map.set(id, { open: openRequestFor(requests, id), count: requestCount(requests, id) })
+    }
+    return map
+  }, [requests])
+
+  const togglePanel = useCallback(
+    (personId: string) => {
+      const panelId = `person-${personId}`
+      setOpenPanel(useStore.getState().openPanelId === panelId ? null : panelId)
+    },
+    [setOpenPanel],
+  )
 
   const sorted = useMemo(() => {
     switch (filter) {
@@ -62,22 +86,35 @@ export function ListTab() {
 
       <div className="flex-1 overflow-y-auto pb-4">
         {sorted.map((person) => {
-          const panelId = `person-${person.id}`
-          const isOpen = openPanelId === panelId
-
+          const info = requestInfo.get(person.id)
           return (
             <PersonRow
               key={person.id}
               person={person}
-              isOpen={isOpen}
-              onTogglePanel={() => setOpenPanel(isOpen ? null : panelId)}
-              onSetAvailability={(available) => setAvailability(person.id, available)}
-              onSetBackup={(backup) => setBackup(person.id, backup)}
+              openRequest={info?.open}
+              requestCount={info?.count ?? 0}
+              isOpen={openPanelId === `person-${person.id}`}
+              onTogglePanel={togglePanel}
+              onSetAvailability={setAvailability}
+              onSetBackup={setBackup}
+              onRequest={setRequesting}
+              onConfirmRequest={confirmRequest}
+              onCancelRequest={cancelRequest}
               onCopyContact={showSnackbar}
             />
           )
         })}
       </div>
+
+      <RequestSlotSheet
+        key={requesting?.id ?? 'closed'}
+        person={requesting}
+        onCancel={() => setRequesting(null)}
+        onConfirm={(slotIndex) => {
+          if (requesting) createRequest(requesting.id, slotIndex)
+          setRequesting(null)
+        }}
+      />
     </div>
   )
 }

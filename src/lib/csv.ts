@@ -3,13 +3,18 @@ import { NEVER_DONE_KEYS, neverDoneKey } from '../data/neverDone'
 import { isBackupSeed } from '../data/backup'
 import { scheduleBatchRange, slotIndexFromStart, slotStart, seedPastSlotDone } from './slots'
 
+/** CR-142: trim, collapse whitespace, compare title + name case-insensitively. */
+export function personNameKey(title: string, name: string): string {
+  return `${title} ${name}`.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
 function parseTitleName(full: string): { title: 'Swami' | 'Maa'; name: string; fullName: string } {
-  const trimmed = full.trim()
-  if (trimmed.startsWith('Swami ')) {
-    return { title: 'Swami', name: trimmed.slice(6), fullName: trimmed }
-  }
-  if (trimmed.startsWith('Maa ')) {
-    return { title: 'Maa', name: trimmed.slice(4), fullName: trimmed }
+  const trimmed = full.replace(/\s+/g, ' ').trim()
+  const prefix = trimmed.match(/^(swami|maa) /i)
+  if (prefix) {
+    const title = prefix[1].toLowerCase() === 'maa' ? 'Maa' : 'Swami'
+    const name = trimmed.slice(prefix[0].length)
+    return { title, name, fullName: `${title} ${name}` }
   }
   return { title: 'Swami', name: trimmed, fullName: trimmed }
 }
@@ -53,6 +58,7 @@ export type RosterParse = {
   people: Person[]
   unmatchedNeverDone: string[]
   duplicateIds: string[]
+  mergedNames: string[]
 }
 
 export function parsePeopleCsv(csv: string): Person[] {
@@ -64,6 +70,8 @@ export function parseRosterCsv(csv: string): RosterParse {
   const people: Person[] = []
   const usedIds = new Set<string>()
   const duplicateIds: string[] = []
+  const mergedNames: string[] = []
+  const byName = new Map<string, number>()
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]
@@ -83,6 +91,23 @@ export function parseRosterCsv(csv: string): RosterParse {
 
     const { title, name, fullName } = parseTitleName(nameCol)
     const contacts = parseComm(comm, contact, email)
+
+    const nameKey = personNameKey(title, name)
+    const existingIdx = byName.get(nameKey)
+    if (existingIdx !== undefined) {
+      const kept = people[existingIdx]
+      people[existingIdx] = {
+        ...kept,
+        email: kept.email ?? contacts.email,
+        phone: kept.phone ?? contacts.phone,
+        whatsapp: kept.whatsapp ?? contacts.whatsapp,
+        available: kept.available && isInAshram(inAshram),
+        backup: kept.backup || isBackupSeed(fullName),
+      }
+      mergedNames.push(fullName)
+      continue
+    }
+    byName.set(nameKey, people.length)
 
     let id = brNo
     if (usedIds.has(id)) {
@@ -110,7 +135,7 @@ export function parseRosterCsv(csv: string): RosterParse {
   const matched = new Set(people.map((p) => neverDoneKey(p.title, p.name)))
   const unmatchedNeverDone = [...NEVER_DONE_KEYS].filter((key) => !matched.has(key))
 
-  return { people, unmatchedNeverDone, duplicateIds }
+  return { people, unmatchedNeverDone, duplicateIds, mergedNames }
 }
 
 function parseCsvLine(line: string): string[] {

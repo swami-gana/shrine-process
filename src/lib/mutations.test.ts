@@ -31,7 +31,7 @@ function emptySlot(index: number, extra: Partial<Slot> = {}): Slot {
 }
 
 function state(slots: Slot[]): AppState {
-  return { people: [person], slots, templates: [], version: 2 }
+  return { people: [person], slots, templates: [], requests: [], version: 2 }
 }
 
 function mut(partial: Omit<QueuedMutation, 'clientId' | 'attempts'> & { clientId?: string; attempts?: number }): QueuedMutation {

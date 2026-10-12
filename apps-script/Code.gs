@@ -14,8 +14,18 @@ const SHEETS = {
   PEOPLE: 'People',
   SLOTS: 'Slots',
   TEMPLATES: 'Templates',
+  REQUESTS: 'Requests',
   META: 'Meta',
 };
+
+const SLOT_HEADERS = ['index', 'personId', 'confirmedAt', 'kitAckAt', 'doneAt', 'note', 'noteUpdatedAt'];
+const REQUEST_HEADERS = ['id', 'personId', 'slotIndex', 'status', 'createdAt', 'closedAt'];
+const NOTE_MAX_LENGTH = 280;
+
+const AVAILABILITY_REQUEST_TEMPLATE = [
+  'availability_request', 'Availability request', 'empty_slot', 'message', '',
+  'Namaskaram Swami/Maa 🙏\n\nWould you be able to do Shrine process from {{slot_dates}}?', '', '',
+];
 
 const PASSCODE_PROP = 'PASSCODE';
 const COORDINATOR_EMAIL_PROP = 'COORDINATOR_EMAIL';
@@ -51,9 +61,8 @@ function setupSheets() {
     'email', 'phone', 'whatsapp', 'language', 'neverDone',
   ]);
 
-  getOrCreateSheet(ss, SHEETS.SLOTS, [
-    'index', 'personId', 'confirmedAt', 'kitAckAt', 'doneAt',
-  ]);
+  getOrCreateSheet(ss, SHEETS.SLOTS, SLOT_HEADERS);
+  getOrCreateSheet(ss, SHEETS.REQUESTS, REQUEST_HEADERS);
 
   getOrCreateSheet(ss, SHEETS.TEMPLATES, [
     'id', 'label', 'scope', 'channel', 'subject_en', 'body_en', 'subject_ta', 'body_ta',
@@ -115,6 +124,7 @@ function seedTemplates(ss) {
       'Namaskaram {{title}},\n\nJust confirming you are available for Shrine process from {{slot_dates}} 🙏', '', ''],
     ['kit_reminder', 'Copy kit reminder', 'person', 'message', '',
       'Namaskaram {{title}} 🙏\n\nGentle reminder that your Shrine Process starts tomorrow. Pls confirm once you collected the kit from {{prev_person}}.\nAfter your 3 days, pls refill and hand over to {{next_person}} 🙏', '', ''],
+    AVAILABILITY_REQUEST_TEMPLATE,
   ];
 
   templates.forEach((t) => sheet.appendRow(t));
@@ -130,7 +140,14 @@ function doGet(e) {
   }
 
   if (action === 'state') {
-    return jsonResponse(readState());
+    // Expiring stale requests writes to the sheet, so take the lock when it is free.
+    const lock = LockService.getScriptLock();
+    const locked = lock.tryLock(5000);
+    try {
+      return jsonResponse(readState({ write: locked }));
+    } finally {
+      if (locked) lock.releaseLock();
+    }
   }
 
   return jsonResponse({ error: 'unknown action' });
@@ -159,7 +176,18 @@ function mutationFieldKey(body) {
       return 'seq:slot:' + body.slot + ':' + body.field;
     case 'assign':
     case 'book':
+    case 'unbook':
+    case 'removePerson':
+    case 'restoreSlot':
       return 'seq:slot:' + body.slot + ':personId';
+    case 'setNote':
+      return 'seq:slot:' + body.slot + ':note';
+    case 'createRequest':
+      return 'seq:request:' + body.requestId + ':create';
+    case 'confirmRequest':
+    case 'cancelRequest':
+    case 'reopenRequest':
+      return 'seq:request:' + body.requestId + ':status';
     case 'setAvailability':
       return 'seq:person:' + body.personId + ':available';
     case 'setBackup':
@@ -212,6 +240,30 @@ function handleMutation(body) {
     case 'book':
       result = bookSlot(body.slot, body.personId);
       break;
+    case 'unbook':
+      result = unbookSlot(body.slot, body.personId);
+      break;
+    case 'removePerson':
+      result = removePerson(body.slot);
+      break;
+    case 'restoreSlot':
+      result = restoreSlot(body.slot, body.snapshot || {});
+      break;
+    case 'setNote':
+      result = setNote(body.slot, body.note);
+      break;
+    case 'createRequest':
+      result = createRequest(body.requestId, body.personId, body.slot);
+      break;
+    case 'confirmRequest':
+      result = confirmRequest(body.requestId);
+      break;
+    case 'cancelRequest':
+      result = cancelRequest(body.requestId);
+      break;
+    case 'reopenRequest':
+      result = reopenRequest(body.requestId);
+      break;
     default:
       return { ok: false, reason: 'unknown action' };
   }
@@ -220,12 +272,25 @@ function handleMutation(body) {
   return result;
 }
 
-function readState() {
+/** Mutations hold the script lock, so they may write; a GET writes only when it got the lock. */
+function readState(opts) {
+  const canWrite = !opts || opts.write !== false;
+  ensureSlotColumns();
   const people = readPeople();
   const slots = readSlots();
-  const templates = readTemplates();
+  const templates = readTemplates(canWrite);
+  const requests = readRequests(canWrite);
   const version = parseInt(getMeta('version') || '1', 10);
-  return { people, slots, templates, version };
+  return { people, slots, templates, requests, version };
+}
+
+/** CR-157: add the note columns to an existing Slots tab. */
+function ensureSlotColumns() {
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (headers.length >= SLOT_HEADERS.length && headers[5] === 'note') return;
+  sheet.getRange(1, 1, 1, SLOT_HEADERS.length).setValues([SLOT_HEADERS]);
 }
 
 function readPeople() {
@@ -279,6 +344,8 @@ function readSlotsRaw() {
       confirmedAt: row[2] || null,
       kitAckAt: row[3] || null,
       doneAt: row[4] || null,
+      note: row[5] ? String(row[5]) : null,
+      noteUpdatedAt: row[6] || null,
     });
   }
   return slots;
@@ -288,9 +355,15 @@ function readSlots() {
   return readSlotsRaw();
 }
 
-function readTemplates() {
+function readTemplates(canWrite) {
   const sheet = getSpreadsheet().getSheetByName(SHEETS.TEMPLATES);
-  const data = sheet.getDataRange().getValues();
+  let data = sheet.getDataRange().getValues();
+  // CR-164: add the Availability request row once; after that the sheet owns its text.
+  const hasRequestTemplate = data.some(function (row) { return row[0] === AVAILABILITY_REQUEST_TEMPLATE[0]; });
+  if (!hasRequestTemplate && canWrite) {
+    sheet.appendRow(AVAILABILITY_REQUEST_TEMPLATE);
+    data = sheet.getDataRange().getValues();
+  }
   const templates = [];
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
@@ -322,7 +395,8 @@ function assignSlot(slotIndex, personId) {
   const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
   const row = ensureSlotRow(sheet, slotIndex);
 
-  sheet.getRange(row, 2, 1, 4).setValues([[personId, '', '', '']]);
+  sheet.getRange(row, 2, 1, 6).setValues([[personId, '', '', '', '', '']]);
+  resolveRequestsOnFill(slotIndex, personId, false);
   bumpVersion();
   return { ok: true, state: readState() };
 }
@@ -339,11 +413,11 @@ function setAvailability(personId, available) {
     const data = slotsSheet.getDataRange().getValues();
     const today = startOfDay(new Date());
     for (let i = 1; i < data.length; i++) {
-      if (data[i][1] === personId) {
+      if (String(data[i][1]) === String(personId)) {
         const idx = Number(data[i][0]);
         const end = slotEnd(idx);
         if (end >= today) {
-          slotsSheet.getRange(i + 1, 2, 1, 4).setValues([['', '', '', '']]);
+          slotsSheet.getRange(i + 1, 2, 1, 6).setValues([['', '', '', '', '', '']]);
         }
       }
     }
@@ -371,7 +445,8 @@ function bookSlot(slotIndex, personId) {
     return { ok: false, reason: 'taken', state: readState() };
   }
 
-  sheet.getRange(row, 2, 1, 4).setValues([[personId, '', '', '']]);
+  sheet.getRange(row, 2, 1, 6).setValues([[personId, '', '', '', '', '']]);
+  resolveRequestsOnFill(slotIndex, personId, true);
   bumpVersion();
 
   const person = readPeople().find((p) => p.id === personId);
@@ -388,6 +463,181 @@ function bookSlot(slotIndex, personId) {
   return { ok: true, state: readState() };
 }
 
+/** CR-130, CR-132: undo a self-booking made from this device; tell the coordinator. */
+function unbookSlot(slotIndex, personId) {
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
+  const row = findSlotRow(sheet, slotIndex);
+  if (!row) return { ok: false, reason: 'not found', state: readState() };
+  const values = sheet.getRange(row, 2, 1, 4).getValues()[0];
+  if (String(values[0]) !== String(personId) || values[1] || values[2] || values[3]) {
+    return { ok: false, reason: 'changed', state: readState() };
+  }
+  sheet.getRange(row, 2, 1, 6).setValues([['', '', '', '', '', '']]);
+  bumpVersion();
+
+  const person = readPeople().find((p) => p.id === String(personId));
+  const coordinatorEmail = PropertiesService.getScriptProperties().getProperty(COORDINATOR_EMAIL_PROP);
+  if (coordinatorEmail && person) {
+    MailApp.sendEmail(
+      coordinatorEmail,
+      'Shrine Process — booking removed',
+      person.fullName + ' removed their booking for ' + formatSlotRange(slotIndex) + '. The slot is open again.',
+    );
+  }
+  return { ok: true, state: readState() };
+}
+
+/** CR-151: back to TBD. No email (CR-156). Closed requests stay closed (CR-187). */
+function removePerson(slotIndex) {
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
+  const row = ensureSlotRow(sheet, slotIndex);
+  sheet.getRange(row, 2, 1, 6).setValues([['', '', '', '', '', '']]);
+  bumpVersion();
+  return { ok: true, state: readState() };
+}
+
+/** CR-153: Undo of Remove person puts back exactly what was there. */
+function restoreSlot(slotIndex, snap) {
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
+  const row = ensureSlotRow(sheet, slotIndex);
+  sheet.getRange(row, 2, 1, 6).setValues([[
+    snap.personId || '', snap.confirmedAt || '', snap.kitAckAt || '', snap.doneAt || '',
+    snap.note || '', snap.noteUpdatedAt || '',
+  ]]);
+  if (snap.personId) resolveRequestsOnFill(slotIndex, String(snap.personId), false);
+  bumpVersion();
+  return { ok: true, state: readState() };
+}
+
+/** CR-162, CR-163 */
+function setNote(slotIndex, note) {
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
+  const row = ensureSlotRow(sheet, slotIndex);
+  const text = String(note || '').trim().slice(0, NOTE_MAX_LENGTH);
+  sheet.getRange(row, 6, 1, 2).setValues([[text, text ? new Date().toISOString() : '']]);
+  bumpVersion();
+  return { ok: true, state: readState() };
+}
+
+// ---------------------------------------------------------------------------
+// Requests (CR05)
+
+function requestsSheet() {
+  return getOrCreateSheet(getSpreadsheet(), SHEETS.REQUESTS, REQUEST_HEADERS);
+}
+
+function readRequestRows() {
+  const sheet = requestsSheet();
+  const data = sheet.getDataRange().getValues();
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
+    const r = data[i];
+    if (!r[0]) continue;
+    rows.push({
+      row: i + 1,
+      id: String(r[0]),
+      personId: String(r[1]),
+      slotIndex: Number(r[2]),
+      status: String(r[3]),
+      createdAt: r[4] instanceof Date ? r[4].toISOString() : String(r[4] || ''),
+      closedAt: r[5] ? (r[5] instanceof Date ? r[5].toISOString() : String(r[5])) : null,
+    });
+  }
+  return rows;
+}
+
+function setRequestStatus(req, status) {
+  const closedAt = status === 'open' ? '' : new Date().toISOString();
+  const sheet = requestsSheet();
+  sheet.getRange(req.row, 4).setValue(status);
+  sheet.getRange(req.row, 6).setValue(closedAt);
+  req.status = status;
+  req.closedAt = closedAt || null;
+}
+
+/** CR-186: an open request whose slot has started is expired. */
+function readRequests(canWrite) {
+  const rows = readRequestRows();
+  const today = startOfDay(new Date());
+  rows.forEach(function (r) {
+    if (r.status !== 'open' || !(slotStart(r.slotIndex) < today)) return;
+    if (canWrite) setRequestStatus(r, 'expired');
+    else r.status = 'expired';
+  });
+  return rows.map(function (r) {
+    return {
+      id: r.id, personId: r.personId, slotIndex: r.slotIndex,
+      status: r.status, createdAt: r.createdAt, closedAt: r.closedAt,
+    };
+  });
+}
+
+/** CR-185, CR-185a — runs inside the caller's lock. */
+function resolveRequestsOnFill(slotIndex, personId, selfBooking) {
+  readRequestRows().forEach(function (r) {
+    if (r.status !== 'open') return;
+    if (r.slotIndex === Number(slotIndex)) {
+      setRequestStatus(r, r.personId === String(personId) ? 'confirmed' : 'released');
+    } else if (selfBooking && r.personId === String(personId)) {
+      setRequestStatus(r, 'confirmed');
+    }
+  });
+}
+
+function createRequest(requestId, personId, slotIndex) {
+  const rows = readRequestRows();
+  if (rows.some(function (r) { return r.id === String(requestId); })) {
+    return { ok: true, state: readState() };
+  }
+  // CR-169: one open request per person.
+  if (rows.some(function (r) { return r.personId === String(personId) && r.status === 'open'; })) {
+    return { ok: true, ignored: true, state: readState() };
+  }
+  requestsSheet().appendRow([String(requestId), String(personId), Number(slotIndex), 'open', new Date().toISOString(), '']);
+  bumpVersion();
+  return { ok: true, state: readState() };
+}
+
+/** CR-180: atomic under the script lock; CR-182: never overwrite a filled slot. */
+function confirmRequest(requestId) {
+  const req = readRequestRows().find(function (r) { return r.id === String(requestId); });
+  if (!req || req.status !== 'open') return { ok: true, ignored: true, state: readState() };
+
+  const sheet = getSpreadsheet().getSheetByName(SHEETS.SLOTS);
+  const row = ensureSlotRow(sheet, req.slotIndex);
+  const holderId = sheet.getRange(row, 2).getValue();
+  if (holderId && String(holderId) !== req.personId) {
+    const holder = readPeople().find(function (p) { return p.id === String(holderId); });
+    return { ok: false, reason: 'filled', holder: holder ? holder.fullName : 'someone else', state: readState() };
+  }
+
+  sheet.getRange(row, 2, 1, 6).setValues([[req.personId, new Date().toISOString(), '', '', '', '']]);
+  resolveRequestsOnFill(req.slotIndex, req.personId, false);
+  bumpVersion();
+  return { ok: true, state: readState() };
+}
+
+function cancelRequest(requestId) {
+  const req = readRequestRows().find(function (r) { return r.id === String(requestId); });
+  if (req && req.status === 'open') {
+    setRequestStatus(req, 'cancelled');
+    bumpVersion();
+  }
+  return { ok: true, state: readState() };
+}
+
+/** Undo of Cancel request (CR-184). */
+function reopenRequest(requestId) {
+  const rows = readRequestRows();
+  const req = rows.find(function (r) { return r.id === String(requestId); });
+  const otherOpen = req && rows.some(function (r) { return r.personId === req.personId && r.status === 'open'; });
+  if (req && req.status === 'cancelled' && !otherOpen) {
+    setRequestStatus(req, 'open');
+    bumpVersion();
+  }
+  return { ok: true, state: readState() };
+}
+
 function findSlotRow(sheet, index) {
   const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
@@ -399,7 +649,7 @@ function findSlotRow(sheet, index) {
 function ensureSlotRow(sheet, index) {
   const existing = findSlotRow(sheet, index);
   if (existing) return existing;
-  sheet.appendRow([index, '', '', '', '']);
+  sheet.appendRow([index, '', '', '', '', '', '']);
   return sheet.getLastRow();
 }
 

@@ -104,7 +104,7 @@ export function scheduleBatchRange(): { min: number; max: number } {
 }
 
 export function emptySlot(index: number): Slot {
-  return { index, personId: null, confirmedAt: null, kitAckAt: null, doneAt: null }
+  return { index, personId: null, confirmedAt: null, kitAckAt: null, doneAt: null, note: null, noteUpdatedAt: null }
 }
 
 export function coercePersonId(id: unknown): string | null {
@@ -120,6 +120,8 @@ export function coerceSlot(slot: Slot): Slot {
     confirmedAt: slot.confirmedAt ? String(slot.confirmedAt) : null,
     kitAckAt: slot.kitAckAt ? String(slot.kitAckAt) : null,
     doneAt: slot.doneAt ? String(slot.doneAt) : null,
+    note: slot.note ? String(slot.note) : null,
+    noteUpdatedAt: slot.noteUpdatedAt ? String(slot.noteUpdatedAt) : null,
   }
 }
 
@@ -163,4 +165,15 @@ export function bookableSlotIndices(): number[] {
     i++
   }
   return indices
+}
+
+/** Group slot indices under their "September 2026" month heading, in order. */
+export function groupByMonth(indices: number[]): [string, number[]][] {
+  const map = new Map<string, number[]>()
+  for (const i of indices) {
+    const key = formatMonthYear(slotStart(i))
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(i)
+  }
+  return [...map.entries()]
 }
