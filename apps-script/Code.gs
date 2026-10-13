@@ -32,7 +32,7 @@ const COORDINATOR_EMAIL_PROP = 'COORDINATOR_EMAIL';
 const ANCHOR_DATE = new Date(2026, 8, 12); // Sep 12 2026
 
 /** Paste your Google Sheet ID here (from the URL between /d/ and /edit) */
-const SPREADSHEET_ID = '1ygj7tbP96ooBmde_iY_3AFqj4GDTp3cYAHXFCPED8FM';
+const SPREADSHEET_ID = '1iurr5omCfVK9tiIrDmpj2JHflHsWvldZchzFcfddpxg';
 
 function getSpreadsheet() {
   const active = SpreadsheetApp.getActiveSpreadsheet();
