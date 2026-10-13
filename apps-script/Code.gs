@@ -695,6 +695,8 @@ function seedFromApp(slots, people) {
 // ---------------------------------------------------------------------------
 // Mirror to the original BR Process sheet: name only, in the Shrine Process column.
 
+/** Off unless the Script Property BR_SYNC is set to "on". Nothing touches BR Process before then. */
+const BR_SYNC_PROP = 'BR_SYNC';
 const BR_SHEET_ID_PROP = 'BR_SHEET_ID';
 const BR_SHEET_ID_DEFAULT = '1qeCKfehPv-pGXM7EZNL79Z26RKCSw9ucvXzZPj0TN-k';
 const BR_TAB = 'Reserve Your BR Process Date he';
@@ -709,6 +711,8 @@ function slotOwners() {
 
 /** Writes the new name for every slot whose person changed. Never fails the app's write. */
 function mirrorToBrSheet(before) {
+  const props = PropertiesService.getScriptProperties();
+  if (String(props.getProperty(BR_SYNC_PROP) || '').toLowerCase() !== 'on') return;
   try {
     const after = slotOwners();
     const changed = Object.keys(after).filter(function (k) { return (before[k] || '') !== after[k]; });
@@ -720,7 +724,7 @@ function mirrorToBrSheet(before) {
     const names = {};
     readPeople().forEach(function (p) { names[p.id] = p.fullName; });
 
-    const id = PropertiesService.getScriptProperties().getProperty(BR_SHEET_ID_PROP) || BR_SHEET_ID_DEFAULT;
+    const id = props.getProperty(BR_SHEET_ID_PROP) || BR_SHEET_ID_DEFAULT;
     const sheet = SpreadsheetApp.openById(id).getSheetByName(BR_TAB);
     if (!sheet) return;
     const values = sheet.getDataRange().getDisplayValues();

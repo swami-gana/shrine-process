@@ -61,7 +61,9 @@ and must behave the same in both. Add new actions to `mutationKey` and
 - **Backend sheet** ("Shrine process (pwa backend)") — the app's datastore, every field.
 - **BR Process 2026** — the original sheet others read. `mirrorToBrSheet` in `Code.gs`
   writes only the person's name into its Shrine Process column whenever a slot's person
-  changes, by any route. It never fails the app's write.
+  changes, by any route. It never fails the app's write. **Off by default:** it runs only
+  when the Script Property `BR_SYNC` is `on`. It only ever writes the Shrine Process name
+  cell on the row whose start date matches the slot — no other tab, column or row.
 - Until the app was connected, the schedule lived only in the coordinator's phone. On first
   connect the app sends it up with `seedFromApp`, which the server accepts only while the
   Slots tab is empty.
