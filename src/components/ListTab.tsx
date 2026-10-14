@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from 'react'
 import clsx from 'clsx'
+import { Search, X } from 'lucide-react'
 import { useStore } from '../store'
 import { sortNextUp, sortBackup } from '../lib/derived'
 import { openRequestFor, requestCount } from '../lib/requests'
+import { searchKey } from '../lib/search'
 import type { Person } from '../types'
 import { PersonRow } from './PersonRow'
 import { RequestSlotSheet } from './RequestSlotSheet'
@@ -23,6 +25,7 @@ export function ListTab() {
 
   const [filter, setFilter] = useState<Filter>('az')
   const [requesting, setRequesting] = useState<Person | null>(null)
+  const [query, setQuery] = useState('')
 
   const requestInfo = useMemo(() => {
     const map = new Map<string, { open: ReturnType<typeof openRequestFor>; count: number }>()
@@ -50,6 +53,12 @@ export function ListTab() {
         return [...people].sort((a, b) => a.fullName.localeCompare(b.fullName))
     }
   }, [people, filter])
+
+  const visible = useMemo(() => {
+    const q = searchKey(query)
+    if (!q) return sorted
+    return sorted.filter((p) => searchKey(p.fullName).includes(q))
+  }, [sorted, query])
 
   if (people.length === 0) {
     return (
@@ -84,8 +93,45 @@ export function ListTab() {
         ))}
       </div>
 
+      <div className="px-4 pb-2">
+        <div className="relative">
+          <Search
+            size={18}
+            strokeWidth={1.75}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 pointer-events-none"
+            aria-hidden
+          />
+          <input
+            id="list-search"
+            type="search"
+            inputMode="search"
+            autoComplete="off"
+            placeholder="Search name"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setOpenPanel(null)
+            }}
+            className="w-full pl-10 pr-10 py-2 rounded-[11px] border border-hairline bg-surface-1 text-[15px] text-text-1 placeholder:text-text-3 [&::-webkit-search-cancel-button]:hidden"
+          />
+          {query && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setQuery('')}
+              className="absolute right-0 top-0 h-full w-10 flex items-center justify-center text-text-3"
+            >
+              <X size={18} strokeWidth={1.75} />
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto pb-4">
-        {sorted.map((person) => {
+        {visible.length === 0 && (
+          <p className="px-4 py-3 text-[15px] text-text-2">No name matches that.</p>
+        )}
+        {visible.map((person) => {
           const info = requestInfo.get(person.id)
           return (
             <PersonRow

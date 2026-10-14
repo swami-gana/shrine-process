@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { Person } from '../types'
 import { personStatusLine } from '../lib/derived'
+import { searchKey } from '../lib/search'
 import { formatSlotRange } from '../lib/slots'
 import { useStore } from '../store'
 
@@ -65,10 +66,8 @@ export function PersonPicker({
   const filtered = useMemo(() => {
     let list = people
     if (excludeUnavailable) list = list.filter((p) => p.available)
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      list = list.filter((p) => p.fullName.toLowerCase().includes(q))
-    }
+    const q = searchKey(search)
+    if (q) list = list.filter((p) => searchKey(p.fullName).includes(q))
     return [...list].sort((a, b) => a.fullName.localeCompare(b.fullName))
   }, [people, search, excludeUnavailable])
 
