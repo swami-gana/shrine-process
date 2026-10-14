@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import type { Person } from '../types'
-import { personStatusLine } from '../lib/derived'
+import { nextSlotByPerson, personStatusLine } from '../lib/derived'
 import { searchKey } from '../lib/search'
 import { formatSlotRange } from '../lib/slots'
 import { useStore } from '../store'
@@ -38,6 +38,8 @@ export function PersonPicker({
   const [selected, setSelected] = useState<string | null>(null)
   const [vpHeight, setVpHeight] = useState<number | null>(null)
   const setSheetOpen = useStore((s) => s.setSheetOpen)
+  const slots = useStore((s) => s.slots)
+  const nextSlots = useMemo(() => nextSlotByPerson(slots), [slots])
   const searchRef = useRef<HTMLInputElement>(null)
 
   const keyboardUp =
@@ -124,7 +126,7 @@ export function PersonPicker({
               >
                 <div className="text-[16px] leading-[1.3] font-medium text-text-1">{person.fullName}</div>
                 {showStatus && (
-                  <div className="text-[13px] leading-[1.35] text-text-2 mt-0.5">{personStatusLine(person)}</div>
+                  <div className="text-[13px] leading-[1.35] text-text-2 mt-0.5">{personStatusLine(person, nextSlots.get(person.id))}</div>
                 )}
               </button>
             ))

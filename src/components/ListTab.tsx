@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Search, X } from 'lucide-react'
 import { useStore } from '../store'
-import { sortNextUp, sortBackup } from '../lib/derived'
+import { nextSlotByPerson, sortNextUp, sortBackup } from '../lib/derived'
 import { openRequestFor, requestCount } from '../lib/requests'
 import { searchKey } from '../lib/search'
 import type { Person } from '../types'
@@ -19,6 +19,8 @@ export function ListTab() {
   const openPanelId = useStore((s) => s.openPanelId)
   const setOpenPanel = useStore((s) => s.setOpenPanel)
   const requests = useStore((s) => s.requests)
+  const slots = useStore((s) => s.slots)
+  const nextSlots = useMemo(() => nextSlotByPerson(slots), [slots])
   const createRequest = useStore((s) => s.createRequest)
   const confirmRequest = useStore((s) => s.confirmRequest)
   const cancelRequest = useStore((s) => s.cancelRequest)
@@ -138,6 +140,7 @@ export function ListTab() {
               key={person.id}
               person={person}
               openRequest={info?.open}
+              nextSlot={nextSlots.get(person.id)}
               requestCount={info?.count ?? 0}
               isOpen={openPanelId === `person-${person.id}`}
               onTogglePanel={togglePanel}

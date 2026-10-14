@@ -1,6 +1,6 @@
 import { differenceInCalendarDays } from 'date-fns'
 import type { Person, Slot, SlotCardState } from '../types'
-import { isPastSlot, slotEnd, today } from './slots'
+import { formatSlotRange, isPastSlot, slotEnd, today } from './slots'
 
 export function getSlotCardState(slot: Slot): SlotCardState {
   if (slot.personId === null) return 'tbd'
@@ -47,7 +47,19 @@ export function recomputeAllLastDone(people: Person[], slots: Slot[]): Person[] 
   }))
 }
 
-export function personStatusLine(person: Person): string {
+/** Each person's earliest slot that hasn't ended yet, keyed by person id. */
+export function nextSlotByPerson(slots: Slot[]): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const s of slots) {
+    if (!s.personId || isPastSlot(s.index)) continue
+    const prev = map.get(s.personId)
+    if (prev === undefined || s.index < prev) map.set(s.personId, s.index)
+  }
+  return map
+}
+
+/** `nextSlot` replaces "Yet to do" with "Scheduled for <dates>" once someone has a slot. */
+export function personStatusLine(person: Person, nextSlot?: number): string {
   let base: string
   if (!person.available) {
     base = 'Not available'
@@ -55,7 +67,7 @@ export function personStatusLine(person: Person): string {
     const days = differenceInCalendarDays(today(), new Date(person.lastDone + 'T12:00:00'))
     base = `Last done ${days} days ago`
   } else if (person.neverDone) {
-    base = 'Yet to do'
+    base = nextSlot === undefined ? 'Yet to do' : `Scheduled for ${formatSlotRange(nextSlot)}`
   } else {
     base = 'Done before'
   }

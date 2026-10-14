@@ -13,6 +13,7 @@ import { AratiStick } from '../icons/AratiStick'
 type Props = {
   person: Person
   openRequest: SlotRequest | undefined
+  nextSlot: number | undefined
   requestCount: number
   isOpen: boolean
   onTogglePanel: (personId: string) => void
@@ -52,6 +53,7 @@ function RequestSegment({ count, openRequest }: { count: number; openRequest: Sl
 export const PersonRow = memo(function PersonRow({
   person,
   openRequest,
+  nextSlot,
   requestCount,
   isOpen,
   onTogglePanel,
@@ -137,7 +139,7 @@ export const PersonRow = memo(function PersonRow({
         <div className="flex-1 min-w-0">
           <div className="text-[16px] leading-[1.3] font-medium text-text-1">{person.fullName}</div>
           <div className="text-[13px] leading-[1.35] text-text-2 mt-0.5">
-            {personStatusLine(person)}
+            {personStatusLine(person, nextSlot)}
             {person.available && <RequestSegment count={requestCount} openRequest={openRequest} />}
           </div>
         </div>

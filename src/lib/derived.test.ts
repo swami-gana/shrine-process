@@ -69,3 +69,20 @@ describe('getPersonById', () => {
     expect(getPersonById(roster, '113')?.fullName).toBe('Maa Mugdha')
   })
 })
+
+describe('scheduled people (yet to do)', () => {
+  it('shows "Scheduled for <dates>" instead of "Yet to do" once a future slot is held', async () => {
+    const { nextSlotByPerson } = await import('./derived')
+    const { slotIndexFromStart, today, formatSlotRange } = await import('./slots')
+    const future = slotIndexFromStart(today()) + 5
+    const p = person({ id: '7', name: 'Ahi', title: 'Maa', fullName: 'Maa Ahi', neverDone: true })
+    const slots = [
+      { index: future + 3, personId: '7', confirmedAt: null, kitAckAt: null, doneAt: null },
+      { index: future, personId: '7', confirmedAt: null, kitAckAt: null, doneAt: null },
+    ]
+    const next = nextSlotByPerson(slots).get('7')
+    expect(next).toBe(future)
+    expect(personStatusLine(p, next)).toBe(`Scheduled for ${formatSlotRange(future)}`)
+    expect(personStatusLine(p)).toBe('Yet to do')
+  })
+})
