@@ -146,7 +146,7 @@ After your 3 days, pls refill and hand over to {{next_person}} 🙏`,
     channel: 'message',
     subject: { en: null, ta: null },
     body: {
-      en: 'Namaskaram Swami/Maa 🙏\n\nWould you be able to do Shrine process from {{slot_dates}}?',
+      en: 'Namaskaram Swami/Maa 🙏\n\nAre you available to do Shrine process from {{slot_dates}}?',
       ta: '',
     },
   },

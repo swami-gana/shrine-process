@@ -24,7 +24,7 @@ const NOTE_MAX_LENGTH = 280;
 
 const AVAILABILITY_REQUEST_TEMPLATE = [
   'availability_request', 'Availability request', 'empty_slot', 'message', '',
-  'Namaskaram Swami/Maa 🙏\n\nWould you be able to do Shrine process from {{slot_dates}}?', '', '',
+  'Namaskaram Swami/Maa 🙏\n\nAre you available to do Shrine process from {{slot_dates}}?', '', '',
 ];
 
 const PASSCODE_PROP = 'PASSCODE';
