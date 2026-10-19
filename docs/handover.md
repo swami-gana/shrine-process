@@ -57,7 +57,7 @@ An empty slot inside the next 90 days outranks every reminder on your list.
 
 Two ways to fill one:
 
-- **They pick.** Go to **List → Next up** (available people, longest since they last did it, at the top), tap the button on their row to copy their contact, tap the **link icon** at the top right to copy the scheduling link, send it. They pick their own dates.
+- **They pick.** Go to **List → Next up** (available people with no slot booked, never-done first, then longest since they last did it; Maas and Swamis mixed by name), tap the button on their row to copy their contact, tap the **link icon** at the top right to copy the scheduling link, send it. They pick their own dates.
 - **You ask for a slot.** Open the empty slot on the Schedule tab → copy **Availability request** and send it. Then on the List, open that person → **Request for a slot** → pick the dates. The TBD card now shows who you've asked. When they say yes, open them again → **Mark confirmed**: they're placed in the slot with the thumbs-up already ticked. If they book it themselves on the link, the request closes on its own.
 
 A person asked 3 times without a yes shows **Requested 3x** in ember on their row. Ask someone else.

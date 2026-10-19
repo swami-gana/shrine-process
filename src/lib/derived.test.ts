@@ -86,3 +86,18 @@ describe('scheduled people (yet to do)', () => {
     expect(personStatusLine(p)).toBe('Yet to do')
   })
 })
+
+describe('Next up ordering', () => {
+  it('interleaves Maas and Swamis by name and leaves out anyone already scheduled', () => {
+    const sorted = sortNextUp(
+      [
+        person({ id: '1', name: 'Ahi', title: 'Maa', fullName: 'Maa Ahi', neverDone: true }),
+        person({ id: '2', name: 'Adhura', title: 'Swami', fullName: 'Swami Adhura', neverDone: true }),
+        person({ id: '3', name: 'Bhakti', title: 'Maa', fullName: 'Maa Bhakti', neverDone: true }),
+        person({ id: '4', name: 'Akampita', title: 'Swami', fullName: 'Swami Akampita', neverDone: true }),
+      ],
+      new Map([['3', 40]]),
+    )
+    expect(sorted.map((p) => p.fullName)).toEqual(['Swami Adhura', 'Maa Ahi', 'Swami Akampita'])
+  })
+})

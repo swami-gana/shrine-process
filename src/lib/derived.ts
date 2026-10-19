@@ -103,13 +103,18 @@ function nextUpGroup(person: Person): number {
   return 1
 }
 
-function byFullName(a: Person, b: Person): number {
-  return a.fullName.localeCompare(b.fullName)
+/** By name without the title, so Maas and Swamis interleave instead of every Maa first. */
+function byName(a: Person, b: Person): number {
+  return a.name.localeCompare(b.name) || a.fullName.localeCompare(b.fullName)
 }
 
-export function sortNextUp(people: Person[]): Person[] {
+/**
+ * Available people in the order to ask them. Anyone in `scheduled` (holding a slot that
+ * hasn't ended) is left out — they don't need asking.
+ */
+export function sortNextUp(people: Person[], scheduled?: ReadonlyMap<string, number>): Person[] {
   return [...people]
-    .filter((p) => p.available)
+    .filter((p) => p.available && !scheduled?.has(p.id))
     .sort((a, b) => {
       const ga = nextUpGroup(a)
       const gb = nextUpGroup(b)
@@ -119,7 +124,7 @@ export function sortNextUp(people: Person[]): Person[] {
         const daysB = differenceInCalendarDays(today(), new Date(b.lastDone! + 'T12:00:00'))
         if (daysB !== daysA) return daysB - daysA
       }
-      return byFullName(a, b)
+      return byName(a, b)
     })
 }
 

@@ -48,13 +48,13 @@ export function ListTab() {
   const sorted = useMemo(() => {
     switch (filter) {
       case 'next':
-        return sortNextUp(people)
+        return sortNextUp(people, nextSlots)
       case 'backup':
         return sortBackup(people)
       default:
         return [...people].sort((a, b) => a.fullName.localeCompare(b.fullName))
     }
-  }, [people, filter])
+  }, [people, filter, nextSlots])
 
   const visible = useMemo(() => {
     const q = searchKey(query)
