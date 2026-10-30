@@ -60,6 +60,22 @@ export function SlotCard({ slot, people, panelId, onSelectPerson }: Props) {
       .filter((n): n is string => !!n)
   }, [requests, people, slot.index, slot.personId])
 
+  /** CR-164: the request message, offered on empty and filled slots alike. */
+  const availabilityRequestRow = (): PanelRow | null => {
+    const requestTemplate = templates.find((t) => t.id === 'availability_request')
+    if (!requestTemplate) return null
+    return {
+      icon: <BadgeIcon icon={Calendar} badge="question" className="text-text-2" />,
+      label: 'Availability request',
+      copy: true,
+      onClick: () => {
+        const { plain } = resolveTokens(requestTemplate, { slotIndex: slot.index, people, slots })
+        copyPlainText(plain)
+        showSnackbar('Availability request copied')
+      },
+    }
+  }
+
   const assignedSections = (): PanelSection[] => {
     if (!person) return []
     const availTemplate = templates.find((t) => t.id === 'availability_check')
@@ -100,6 +116,8 @@ export function SlotCard({ slot, people, panelId, onSelectPerson }: Props) {
     }
 
     const messageRows: PanelRow[] = []
+    const requestRow = availabilityRequestRow()
+    if (requestRow) messageRows.push(requestRow)
     if (availTemplate) {
       messageRows.push({
         icon: <BadgeIcon icon={CalendarClock} badge="exclaim" className="text-text-2" />,
@@ -166,19 +184,8 @@ export function SlotCard({ slot, people, panelId, onSelectPerson }: Props) {
         onClick: onSelectPerson,
       },
     ]
-    const requestTemplate = templates.find((t) => t.id === 'availability_request')
-    if (requestTemplate) {
-      rows.push({
-        icon: <BadgeIcon icon={Calendar} badge="question" className="text-text-2" />,
-        label: 'Availability request',
-        copy: true,
-        onClick: () => {
-          const { plain } = resolveTokens(requestTemplate, { slotIndex: slot.index, people, slots })
-          copyPlainText(plain)
-          showSnackbar('Availability request copied')
-        },
-      })
-    }
+    const requestRow = availabilityRequestRow()
+    if (requestRow) rows.push(requestRow)
     return [{ rows }]
   }
 
