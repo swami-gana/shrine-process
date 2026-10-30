@@ -175,6 +175,22 @@ export const useStore = create<Store>((set, get) => {
     get().processQueue()
   }
 
+  /**
+   * The coordinator chose to swap the slot's holder for the requested person: assign them
+   * (which confirms their request, CR-185) and tick their thumbs-up, as Mark confirmed does.
+   */
+  const replaceWithRequested = (requestId: string) => {
+    const state = get()
+    const req = state.requests.find((r) => r.id === requestId)
+    if (!req || req.status !== 'open') return
+    const person = state.people.find((p) => p.id === req.personId)
+    commit({ action: 'assign', slot: req.slotIndex, personId: req.personId })
+    commit(
+      { action: 'setAck', slot: req.slotIndex, field: 'confirmedAt', value: true },
+      `Confirmed — ${person?.fullName ?? 'person'} now has ${formatSlotRange(req.slotIndex)}`,
+    )
+  }
+
   return {
   ...normalizeState(mockState),
   loading: true,
@@ -393,7 +409,10 @@ export const useStore = create<Store>((set, get) => {
     const range = formatSlotRange(req.slotIndex)
     if (slot?.personId && slot.personId !== req.personId) {
       const holder = state.people.find((p) => p.id === slot.personId)?.fullName ?? 'someone else'
-      get().showSnackbar(`${range} is already filled by ${holder}`)
+      get().showSnackbar(`${range} is filled by ${holder}`, {
+        label: 'Replace',
+        onAction: () => replaceWithRequested(requestId),
+      })
       return
     }
     const person = state.people.find((p) => p.id === req.personId)
@@ -476,7 +495,10 @@ export const useStore = create<Store>((set, get) => {
           const requestId = item.payload.requestId
           const req = get().requests.find((r) => r.id === requestId)
           const range = req ? formatSlotRange(req.slotIndex) : 'That slot'
-          get().showSnackbar(`${range} is already filled by ${result.holder ?? 'someone else'}`)
+          get().showSnackbar(`${range} is filled by ${result.holder ?? 'someone else'}`, {
+            label: 'Replace',
+            onAction: () => replaceWithRequested(requestId),
+          })
           continue
         }
 

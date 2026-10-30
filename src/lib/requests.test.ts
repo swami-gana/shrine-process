@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AppState, Person, Slot, SlotRequest } from '../types'
-import { applyWrite } from './applyWrite'
+import { applyQueuedWrites, applyWrite } from './applyWrite'
 import { coalesceEnqueue, mutationKey } from './mutations'
 import { expireRequests, openRequestsForSlot, requestCount } from './requests'
 import { emptySlot, slotIndexFromStart, today } from './slots'
@@ -161,5 +161,22 @@ describe('remove person and notes (CR04)', () => {
     }
     expect(mutationKey(remove.payload)).toBe(mutationKey(restore.payload))
     expect(coalesceEnqueue([remove], restore).map((m) => m.seq)).toEqual([2])
+  })
+})
+
+describe('requesting a filled slot', () => {
+  it('stays open while the holder keeps the slot, and Replace confirms it with the thumbs-up ticked', () => {
+    const filled = [{ ...emptySlot(FUTURE), personId: '3', confirmedAt: 'c' }]
+    let s = applyWrite(state(filled), { action: 'createRequest', requestId: 'r1', personId: '1', slot: FUTURE, createdAt: '1' })
+    expect(s.requests[0].status).toBe('open')
+    expect(openRequestsForSlot(s.requests, FUTURE).map((r) => r.personId)).toEqual(['1'])
+
+    s = applyQueuedWrites(s, [
+      { action: 'assign', slot: FUTURE, personId: '1' },
+      { action: 'setAck', slot: FUTURE, field: 'confirmedAt', value: true },
+    ])
+    expect(slotOf(s, FUTURE).personId).toBe('1')
+    expect(slotOf(s, FUTURE).confirmedAt).not.toBeNull()
+    expect(s.requests[0].status).toBe('confirmed')
   })
 })

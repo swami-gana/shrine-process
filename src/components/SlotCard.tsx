@@ -53,12 +53,12 @@ export function SlotCard({ slot, people, panelId, onSelectPerson }: Props) {
   const togglePanel = () => setOpenPanel(isOpen ? null : panelId)
   const note = person ? (slot.note ?? null) : null
 
+  // Shown on filled slots too: a request there means a replacement is being looked for.
   const requestedNames = useMemo(() => {
-    if (slot.personId) return []
     return openRequestsForSlot(requests, slot.index)
       .map((r) => getPersonById(people, r.personId)?.fullName)
       .filter((n): n is string => !!n)
-  }, [requests, people, slot.index, slot.personId])
+  }, [requests, people, slot.index])
 
   /** CR-164: the request message, offered on empty and filled slots alike. */
   const availabilityRequestRow = (): PanelRow | null => {

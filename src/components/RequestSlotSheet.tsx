@@ -52,18 +52,23 @@ export function RequestSlotSheet({ person, onCancel, onConfirm }: Props) {
               <div className="grid grid-cols-2 gap-2">
                 {indices.map((index) => {
                   const holderId = slots.find((s) => s.index === index)?.personId ?? null
+                  const isSelected = selected === index
+                  const toggle = () => setSelected(isSelected ? null : index)
                   if (holderId) {
+                    // A filled slot can still be requested: the holder may be dropping out,
+                    // and a replacement is searched for in parallel.
                     return (
                       <SlotTile
                         key={index}
                         index={index}
-                        state="scheduled"
+                        state={isSelected ? 'selected' : 'scheduled'}
                         subtitle={getPersonById(people, holderId)?.fullName}
+                        glyph={isSelected ? 'check' : null}
+                        onClick={toggle}
                       />
                     )
                   }
                   const others = openRequestsForSlot(requests, index).filter((r) => r.personId !== person.id).length
-                  const isSelected = selected === index
                   return (
                     <SlotTile
                       key={index}
@@ -71,7 +76,7 @@ export function RequestSlotSheet({ person, onCancel, onConfirm }: Props) {
                       state={isSelected ? 'selected' : 'open'}
                       subtitle={others > 0 ? `${others} requested` : undefined}
                       glyph={isSelected ? 'check' : 'plus'}
-                      onClick={() => setSelected(isSelected ? null : index)}
+                      onClick={toggle}
                     />
                   )
                 })}
