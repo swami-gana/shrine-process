@@ -151,3 +151,13 @@ After your 3 days, pls refill and hand over to {{next_person}} 🙏`,
     },
   },
 ]
+
+/**
+ * The sheet's Templates tab owns the wording (CR-135). Any message missing from what the
+ * sheet sent falls back to the built-in copy, so the copy rows never disappear.
+ */
+export function withDefaultTemplates(templates: Template[] | undefined): Template[] {
+  const fromSheet = Array.isArray(templates) ? templates.filter((t) => t && t.id && t.body?.en) : []
+  const ids = new Set(fromSheet.map((t) => t.id))
+  return [...fromSheet, ...DEFAULT_TEMPLATES.filter((t) => !ids.has(t.id))]
+}

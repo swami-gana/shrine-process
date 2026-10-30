@@ -7,6 +7,7 @@ import { expireRequests, openRequestFor } from '../lib/requests'
 import { canAutoRetry, backoffDelayMs, queuePayloads } from '../lib/mutations'
 import { recomputeAllLastDone } from '../lib/derived'
 import { coerceSlot, formatSlotRange, normalizeSlotsForSchedule } from '../lib/slots'
+import { withDefaultTemplates } from '../lib/templates'
 import { fetchState, postAction, isUsingMock } from '../api/client'
 import {
   beginInflight,
@@ -91,6 +92,7 @@ function normalizeState(state: AppState): AppState {
   )
   return {
     ...state,
+    templates: withDefaultTemplates(state.templates),
     requests,
     people: recomputeAllLastDone(people, slots),
     slots,
